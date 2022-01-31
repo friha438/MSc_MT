@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-from sklearn.decomposition import FactorAnalysis
+from sklearn.decomposition import PCA, FastICA, FactorAnalysis
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import jaccard_score
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, ReLU
@@ -16,10 +16,10 @@ from datetime import datetime
 # Create dataframe from given data
 def read_data_df(size):
     data = pd.read_fwf('shift-masks.txt')
-    d = data.iloc[1:, :]
+    d_f = data.iloc[1:, :]
     a = []
     for row in range(size):
-        r = split_to_values(d.iloc[row])
+        r = split_to_values(d_f.iloc[row])
         a.append(r)
 
     df_new = pd.DataFrame(a)
@@ -32,9 +32,9 @@ def split_to_values(row):
     arr_row = row.array
     rep1 = arr_row[0].replace("{", "")
     rep2 = rep1.replace("}", "")
-    res = rep2.split(",")
+    result = rep2.split(",")
 
-    return res
+    return result
 
 
 # Create a PCA model for dimensionality reduction, fit and transform data
@@ -47,44 +47,54 @@ def fit_pca(data, comp):
 
 
 # Create a FA model for dimensionality reduction, fit and transform data
-# TODO: find a way to inverse transform fa
 def fit_fa(data, comp):
     factor_analyser = FactorAnalysis(n_components=comp, random_state=0)
     df_fa = factor_analyser.fit_transform(data)
+    fa_loadings = factor_analyser.components_
+    df_restored = np.matmul(df_fa, fa_loadings)
 
-    return factor_analyser, df_fa
+    return factor_analyser, df_fa, df_restored
+
+
+# Create an ICA model for dim red, fit and transform data
+# TODO: make ICA converge by increasing max_iter or decreasing tolerance
+def fit_ica(data, comp):
+    ica_model = FastICA(n_components=comp, max_iter=1000)
+    df_ica = ica_model.fit_transform(data)
+    df_res = ica_model.inverse_transform(df_ica)
+
+    return ica_model, df_ica, df_res
 
 
 # Create an auto_encoder for dimensionality reduction
-# TODO: improve the performance and try different dimensionality reductions
 def auto_encoder(train, val, dims, save_model=False, load_model=False):
     if load_model:
         loaded_model = tf.keras.models.load_model("auto_encoder")
         return loaded_model
 
-    n_neurons_d = np.arange(25, 63, 7)
-    n_neurons_e = np.flip(n_neurons_d)
+    # n_neurons_d = np.arange(25, 63, 7)
+    # n_neurons_e = np.flip(n_neurons_d)
 
     # Encoder
     encoder = Sequential(name="Encoder")
     encoder.add(Dense(dims, input_shape=[63], activation='relu'))
     # for n in range(len(n_neurons_e)):
-        # encoder.add(Dense(n_neurons_e[n], activation='relu'))
+    # encoder.add(Dense(n_neurons_e[n], activation='relu'))
     print(encoder.summary())
 
     # Decoder
     decoder = Sequential(name="Decoder")
     # for n in range(len(n_neurons_d)):
-        # decoder.add(Dense(n_neurons_d[n], activation='relu'))   # len(n_neurons_d)-1
+    # decoder.add(Dense(n_neurons_d[n], activation='relu'))   # len(n_neurons_d)-1
     decoder.add(Dense(63, input_shape=[dims], activation='sigmoid'))
     # print(decoder.summary())
 
     # Auto-encoder
     autoencoder = Sequential([encoder, decoder], name="Auto-encoder")
     print(autoencoder.summary())
-    autoencoder.compile(loss="mse", optimizer=Adam(),
+    autoencoder.compile(loss="mse", optimizer=Adam(learning_rate=0.001),
                         metrics=[BinaryAccuracy()])
-    history = autoencoder.fit(train, train, batch_size=8, epochs=20, validation_data=(val, val), verbose=1)
+    history = autoencoder.fit(train, train, batch_size=32, epochs=10, validation_data=(val, val), verbose=1)
     # SGD(learning_rate=0.001, momentum=0.9)
 
     if save_model:
@@ -123,13 +133,38 @@ def encoder_predictor(encoder, decoder, val):
 def model_evaluation(orig, restored):
     res_bi = set_binary(restored)
 
-    print(res_bi[0])
+    # print(res_bi[0])
 
     kl = KLDivergence()
-    kl.update_state(orig, res_bi)
+    kl.update_state(orig, restored)
     kl_val = kl.result().numpy()
 
-    return kl_val
+    j_score = 0
+    for i in range(len(orig)):
+        j_score = j_score + jaccard_score(orig[i], res_bi[i])
+    j_val = j_score/len(orig)
+
+    return kl_val, j_val
+
+
+def model_eval_jaccard(orig, restored):
+    res_bi = set_binary(restored)
+    m11 = 0
+    m01 = 0
+    m10 = 0
+
+    jaccard = []
+    for i in range(len(orig)):
+        for j in range(len(orig[i])):
+            if (orig[i, j] == 1) and (res_bi[i, j] == 1):
+                m11 = m11 + 1
+            if (orig[i, j] == 0) and (res_bi[i, j] == 1):
+                m01 = m01 + 1
+            if (orig[i, j] == 1) and (res_bi[i, j] == 0):
+                m10 = m10 + 1
+
+        jaccard.append(m11/(m01 + m10 + m11))
+    return sum(jaccard)/len(jaccard)
 
 
 # Set restored values to binary data (1 for shift 0 if not)
@@ -156,10 +191,11 @@ def count_distribution(data):
 
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
-    d_size = 1000000  # How many shifts are used
+    d_size = 100000  # How many shifts are used
     n_comp = 25  # How many features the feature-space is reduced to
-    encoder_decoder = True  # True if auto-encoder is initialized and trained
+    encoder_decoder = False  # True if auto-encoder is initialized and trained
     benchmarks = False  # True if benchmarking methods are initialized and trained
+    pca = True
 
     # Read data
     dataframe = read_data_df(d_size)
@@ -178,35 +214,53 @@ if __name__ == '__main__':
 
         # Evaluate results
         restored_data = encoder_predictor(enc, dec, test_set)
-        kl_value = model_evaluation(test_set, restored_data)
+        kl_value, j_value = model_evaluation(test_set, restored_data)
 
         print("KL divergence: ", kl_value)
-
+        print("Jaccard index: ", j_value)
         print("Execution time: ", datetime.now() - startTime)
 
         plot_progress(auto_hist)
 
     elif benchmarks:
-        dim_red = np.arange(5, 60, 5)
-        res = []
+        dim_red = np.arange(10, 61, 10)
+        kl_res = []
+        j_res = []
         for d in dim_red:
-            # Fit transform to pca
+            # Fit transform to pca and/or fa, ica
             pca, data_pca, data_pca_res = fit_pca(train_set, d)
+            # fa, data_fa, data_fa_res = fit_fa(train_set, d)
+            # ica, data_ica, data_ica_res = fit_ica(train_set, d)
 
             test_d = pca.transform(test_set)
             restored_test = pca.inverse_transform(test_d)
 
             # Evaluate results
-            kl_value = model_evaluation(test_set, restored_test)
-            res.append(kl_value)
+            kl_value, j_value = model_evaluation(test_set, restored_test)
 
-        # fa, data_fa = fit_fa(train_set, n_comp)
+            kl_res.append(kl_value)
+            j_res.append(j_value)
 
-        plt.plot(dim_red, res)
-        plt.xlabel("dimensions")
-        plt.ylabel("KL divergence")
+        # plt.plot(dim_red, kl_res, label='KL divergence')
+        plt.plot(dim_red, j_res, label='Jaccard index')
+        plt.xlabel("Dimensions")
+        plt.ylabel("Evaluation")
+        plt.legend()
         plt.show()
 
-        print("KL divergence: ", res)
+        print("KL divergence: ", kl_res)
 
+        print("Execution time: ", datetime.now() - startTime)
+
+    elif pca:
+        pca, data_pca, data_pca_res = fit_pca(train_set, n_comp)
+        test_d = pca.transform(test_set)
+        restored_test = pca.inverse_transform(test_d)
+        kl_value, j_value = model_evaluation(test_set, restored_test)
+
+        j_val_comp = model_eval_jaccard(test_set, restored_test)
+
+        print("KL divergence: ", kl_value)
+        print("Jaccard index (pre-implemented): ", j_value)
+        print("Jaccard index (self-implemented): ", j_val_comp)
         print("Execution time: ", datetime.now() - startTime)
