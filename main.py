@@ -11,6 +11,7 @@ from tensorflow.keras.layers import Dense, ReLU
 from tensorflow.keras.metrics import KLDivergence, CategoricalAccuracy, BinaryAccuracy
 from tensorflow.keras.optimizers import Adam, SGD
 from datetime import datetime
+EPSILON = 0.00001
 
 
 # Create dataframe from given data
@@ -129,7 +130,7 @@ def encoder_predictor(encoder, decoder, val):
     return restored_val
 
 
-# Evaluate the chosen model based on kl divergence
+# Evaluate the chosen model based on kl divergence and Jaccard index
 def model_evaluation(orig, restored):
     res_bi = set_binary(restored)
 
@@ -147,6 +148,7 @@ def model_evaluation(orig, restored):
     return kl_val, j_val
 
 
+# Self-implemented version of Jaccard index
 def model_eval_jaccard(orig, restored):
     res_bi = set_binary(restored)
     m11 = 0
@@ -167,6 +169,33 @@ def model_eval_jaccard(orig, restored):
     return sum(jaccard)/len(jaccard)
 
 
+# Self-implemented version of KL divergence
+def kl_divergence(orig, restored):
+    t_d = np.array(count_distribution(orig))
+    r_d = np.array(count_distribution(restored))
+
+    t_distr = t_d/len(orig)
+    r_distr = r_d/len(orig)
+
+    if t_distr.all() == 0:
+        kl_div = np.sum(r_distr * np.log(r_distr / EPSILON))
+    else:
+        kl_div = np.sum(r_distr * np.log(r_distr / t_distr))
+
+    return kl_div
+
+
+# Self-implemented version of Hamming distance measure
+def hamming_distance(orig, restored):
+    o = np.array(orig)
+    r = np.array(restored)
+    ham_dist = []
+    for i in range(len(orig)):
+        ham_dist.append(sum(abs(o[i]-r[i])))
+    ham_res = sum(np.array(ham_dist))
+    return ham_res
+
+
 # Set restored values to binary data (1 for shift 0 if not)
 def set_binary(val):
     for i in range(len(val)):
@@ -185,17 +214,16 @@ def count_distribution(data):
         for j in range(len(data[i])):
             if data[i, j] == 1:
                 lst[j] = lst[j] + 1
-    print(lst)
     return lst
 
 
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
-    d_size = 100000  # How many shifts are used
-    n_comp = 25  # How many features the feature-space is reduced to
+    d_size = 1000000         # How many shifts are used
+    n_comp = 25             # How many features the feature-space is reduced to
     encoder_decoder = False  # True if auto-encoder is initialized and trained
-    benchmarks = False  # True if benchmarking methods are initialized and trained
-    pca = True
+    benchmarks = False      # True if benchmarking methods are initialized and trained
+    pca = True             # True for only training and testing pca
 
     # Read data
     dataframe = read_data_df(d_size)
@@ -208,17 +236,48 @@ if __name__ == '__main__':
 
     # TODO: run on GPU --> make sure cuda installation works
     if encoder_decoder:
+        dim_red = np.arange(5, 61, 5)
+        j_res_p = []
+        j_res_s = []
 
-        # Define and fit auto_encoder
-        auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, n_comp)
+        for d in dim_red:
+            # Define and fit auto_encoder
+            auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, d)
+            restored_data = encoder_predictor(enc, dec, test_set)
+            j_val_p = model_eval_jaccard(test_set, restored_data)
+            j_val_s = model_eval_jaccard(test_set, restored_data)
+            j_res_p.append(j_val_p)
+            j_res_s.append(j_val_s)
 
+        plt.plot(dim_red, j_res_p, label='Pre-implemented')
+        plt.plot(dim_red, j_res_s, label='Self-implemented')
+        plt.title("Jaccard index as a function of dimensions")
+        plt.xlabel("Dimensions")
+        plt.ylabel("Jaccard index")
+        plt.grid()
+        plt.legend()
+        plt.show()
+
+        '''
         # Evaluate results
         restored_data = encoder_predictor(enc, dec, test_set)
         kl_value, j_value = model_evaluation(test_set, restored_data)
+        kl_val_s = kl_divergence(test_set, set_binary(restored_data))
+        j_val_comp = model_eval_jaccard(test_set, restored_data)
 
-        print("KL divergence: ", kl_value)
-        print("Jaccard index: ", j_value)
+        print("KL divergence (pre-implemented): ", kl_value)
+        print("KL divergence (self-implemented): ", kl_val_s)
+        print("Jaccard index (pre-implemented): ", j_value)
+        print("Jaccard index (self-implemented): ", j_val_comp)
         print("Execution time: ", datetime.now() - startTime)
+
+        distr_true = count_distribution(test_set)
+        distr_pred = count_distribution(set_binary(restored_data))
+        plt.plot(distr_true, label='true')
+        plt.plot(distr_pred, label='pred')
+        plt.legend()
+        plt.show()
+        '''
 
         plot_progress(auto_hist)
 
@@ -253,14 +312,35 @@ if __name__ == '__main__':
         print("Execution time: ", datetime.now() - startTime)
 
     elif pca:
-        pca, data_pca, data_pca_res = fit_pca(train_set, n_comp)
-        test_d = pca.transform(test_set)
-        restored_test = pca.inverse_transform(test_d)
-        kl_value, j_value = model_evaluation(test_set, restored_test)
+        dim_red = np.arange(5, 61, 5)
+        hamming = []
 
-        j_val_comp = model_eval_jaccard(test_set, restored_test)
+        for d in dim_red:
+            pca, data_pca, data_pca_res = fit_pca(train_set, d)
+            test_d = pca.transform(test_set)
+            restored_test = pca.inverse_transform(test_d)
+            hamm_val = hamming_distance(test_set, set_binary(restored_test))
+            hamming.append(hamm_val)
 
-        print("KL divergence: ", kl_value)
+        plt.plot(dim_red, hamming, label='Self-implemented Hamming')
+        plt.title("Hamming distance as a function of dimensions")
+        plt.xlabel("Dimensions")
+        plt.ylabel("Hamming distance")
+        plt.grid()
+        plt.legend()
+        plt.show()
+
+        '''
+        print("KL divergence (pre-implemented): ", kl_value)
+        print("KL divergence (self-implemented): ", kl_val_s)
         print("Jaccard index (pre-implemented): ", j_value)
         print("Jaccard index (self-implemented): ", j_val_comp)
         print("Execution time: ", datetime.now() - startTime)
+
+        distr_true = count_distribution(test_set)
+        distr_pred = count_distribution(set_binary(restored_test))
+        plt.plot(distr_true, label='true')
+        plt.plot(distr_pred, label='pred')
+        plt.legend()
+        plt.show()
+        '''
