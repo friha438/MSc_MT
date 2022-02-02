@@ -73,12 +73,13 @@ def auto_encoder(train, val, dims, save_model=False, load_model=False):
         loaded_model = tf.keras.models.load_model("auto_encoder")
         return loaded_model
 
-    # n_neurons_d = np.arange(25, 63, 7)
+    # n_neurons_d = np.arange(25, 63, 10)
     # n_neurons_e = np.flip(n_neurons_d)
 
     # Encoder
     encoder = Sequential(name="Encoder")
     encoder.add(Dense(dims, input_shape=[63], activation='relu'))
+    # encoder.add(Dense(dims, activation='relu'))
     # for n in range(len(n_neurons_e)):
     # encoder.add(Dense(n_neurons_e[n], activation='relu'))
     print(encoder.summary())
@@ -88,6 +89,7 @@ def auto_encoder(train, val, dims, save_model=False, load_model=False):
     # for n in range(len(n_neurons_d)):
     # decoder.add(Dense(n_neurons_d[n], activation='relu'))   # len(n_neurons_d)-1
     decoder.add(Dense(63, input_shape=[dims], activation='sigmoid'))
+    # decoder.add(Dense(63, activation='sigmoid'))
     # print(decoder.summary())
 
     # Auto-encoder
@@ -95,7 +97,7 @@ def auto_encoder(train, val, dims, save_model=False, load_model=False):
     print(autoencoder.summary())
     autoencoder.compile(loss="mse", optimizer=Adam(learning_rate=0.001),
                         metrics=[BinaryAccuracy()])
-    history = autoencoder.fit(train, train, batch_size=32, epochs=10, validation_data=(val, val), verbose=1)
+    history = autoencoder.fit(train, train, batch_size=64, epochs=15, validation_data=(val, val), verbose=1)
     # SGD(learning_rate=0.001, momentum=0.9)
 
     if save_model:
@@ -178,11 +180,14 @@ def kl_divergence(orig, restored):
     r_distr = r_d/len(orig)
 
     if t_distr.all() == 0:
-        kl_div = np.sum(r_distr * np.log(r_distr / EPSILON))
+        kl_diver = np.sum(t_distr * np.log(t_distr / EPSILON))
     else:
-        kl_div = np.sum(r_distr * np.log(r_distr / t_distr))
+        kl_diver = np.sum(r_distr * np.log(r_distr / t_distr))
 
-    return kl_div
+    if kl_diver < 0:
+        kl_diver = np.sum(t_distr * np.log(t_distr / r_distr))
+
+    return kl_diver
 
 
 # Self-implemented version of Hamming distance measure
@@ -193,7 +198,8 @@ def hamming_distance(orig, restored):
     for i in range(len(orig)):
         ham_dist.append(sum(abs(o[i]-r[i])))
     ham_res = sum(np.array(ham_dist))
-    return ham_res
+    ham_part = ham_res/(len(orig)*len(orig[0]))
+    return ham_res, ham_part
 
 
 # Set restored values to binary data (1 for shift 0 if not)
@@ -221,9 +227,9 @@ if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
     d_size = 1000000         # How many shifts are used
     n_comp = 25             # How many features the feature-space is reduced to
-    encoder_decoder = False  # True if auto-encoder is initialized and trained
+    encoder_decoder = True  # True if auto-encoder is initialized and trained
     benchmarks = False      # True if benchmarking methods are initialized and trained
-    pca = True             # True for only training and testing pca
+    pca = False            # True for only training and testing pca
 
     # Read data
     dataframe = read_data_df(d_size)
@@ -236,39 +242,25 @@ if __name__ == '__main__':
 
     # TODO: run on GPU --> make sure cuda installation works
     if encoder_decoder:
-        dim_red = np.arange(5, 61, 5)
-        j_res_p = []
-        j_res_s = []
 
-        for d in dim_red:
-            # Define and fit auto_encoder
-            auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, d)
-            restored_data = encoder_predictor(enc, dec, test_set)
-            j_val_p = model_eval_jaccard(test_set, restored_data)
-            j_val_s = model_eval_jaccard(test_set, restored_data)
-            j_res_p.append(j_val_p)
-            j_res_s.append(j_val_s)
-
-        plt.plot(dim_red, j_res_p, label='Pre-implemented')
-        plt.plot(dim_red, j_res_s, label='Self-implemented')
-        plt.title("Jaccard index as a function of dimensions")
-        plt.xlabel("Dimensions")
-        plt.ylabel("Jaccard index")
-        plt.grid()
-        plt.legend()
-        plt.show()
-
-        '''
-        # Evaluate results
+        # Define and fit auto_encoder
+        auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, n_comp)
         restored_data = encoder_predictor(enc, dec, test_set)
-        kl_value, j_value = model_evaluation(test_set, restored_data)
-        kl_val_s = kl_divergence(test_set, set_binary(restored_data))
-        j_val_comp = model_eval_jaccard(test_set, restored_data)
 
-        print("KL divergence (pre-implemented): ", kl_value)
-        print("KL divergence (self-implemented): ", kl_val_s)
-        print("Jaccard index (pre-implemented): ", j_value)
-        print("Jaccard index (self-implemented): ", j_val_comp)
+        # Old evaluation method
+        kl_old, jaccard_old = model_evaluation(test_set, restored_data)
+
+        # New evaluation methods
+        kl_div = kl_divergence(test_set, set_binary(restored_data))
+        j_ind = model_eval_jaccard(test_set, restored_data)
+        hamm_val, hamm_shift = hamming_distance(test_set, set_binary(restored_data))
+
+        print("KL divergence (pre-implemented): ", kl_old)
+        print("KL divergence (self-implemented): ", kl_div)
+        print("Jaccard index (pre-implemented): ", jaccard_old)
+        print("Jaccard index (self-implemented): ", j_ind)
+        print("Hamming distance: ", hamm_val)
+        print("Hamming distance/shifts: ", hamm_shift)
         print("Execution time: ", datetime.now() - startTime)
 
         distr_true = count_distribution(test_set)
@@ -277,7 +269,6 @@ if __name__ == '__main__':
         plt.plot(distr_pred, label='pred')
         plt.legend()
         plt.show()
-        '''
 
         plot_progress(auto_hist)
 
@@ -312,29 +303,25 @@ if __name__ == '__main__':
         print("Execution time: ", datetime.now() - startTime)
 
     elif pca:
-        dim_red = np.arange(5, 61, 5)
-        hamming = []
 
-        for d in dim_red:
-            pca, data_pca, data_pca_res = fit_pca(train_set, d)
-            test_d = pca.transform(test_set)
-            restored_test = pca.inverse_transform(test_d)
-            hamm_val = hamming_distance(test_set, set_binary(restored_test))
-            hamming.append(hamm_val)
+        pca, data_pca, data_pca_res = fit_pca(train_set, n_comp)
+        test_d = pca.transform(test_set)
+        restored_test = pca.inverse_transform(test_d)
 
-        plt.plot(dim_red, hamming, label='Self-implemented Hamming')
-        plt.title("Hamming distance as a function of dimensions")
-        plt.xlabel("Dimensions")
-        plt.ylabel("Hamming distance")
-        plt.grid()
-        plt.legend()
-        plt.show()
+        # Old evaluation method
+        kl_old, jaccard_old = model_evaluation(test_set, restored_test)
 
-        '''
-        print("KL divergence (pre-implemented): ", kl_value)
-        print("KL divergence (self-implemented): ", kl_val_s)
-        print("Jaccard index (pre-implemented): ", j_value)
-        print("Jaccard index (self-implemented): ", j_val_comp)
+        # New evaluation methods
+        kl_div = kl_divergence(test_set, set_binary(restored_test))
+        j_ind = model_eval_jaccard(test_set, restored_test)
+        hamm_val, hamm_shift = hamming_distance(test_set, set_binary(restored_test))
+
+        print("KL divergence (pre-implemented): ", kl_old)
+        print("KL divergence (self-implemented): ", kl_div)
+        print("Jaccard index (pre-implemented): ", jaccard_old)
+        print("Jaccard index (self-implemented): ", j_ind)
+        print("Hamming distance: ", hamm_val)
+        print("Hamming distance/shifts: ", hamm_shift)
         print("Execution time: ", datetime.now() - startTime)
 
         distr_true = count_distribution(test_set)
@@ -343,4 +330,3 @@ if __name__ == '__main__':
         plt.plot(distr_pred, label='pred')
         plt.legend()
         plt.show()
-        '''
