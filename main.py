@@ -71,15 +71,18 @@ def fit_ica(data, comp):
 def auto_encoder(train, val, dims, save_model=False, load_model=False):
     if load_model:
         loaded_model = tf.keras.models.load_model("auto_encoder")
-        return loaded_model
+        loaded_encoder = tf.keras.models.load_model("encoder")
+        loaded_decoder = tf.keras.models.load_model("decoder")
+        return loaded_model, loaded_encoder, loaded_decoder
 
-    # n_neurons_d = np.arange(25, 63, 10)
+    # n_neurons_d = np.arange(10, 63, 5)
     # n_neurons_e = np.flip(n_neurons_d)
 
     # Encoder
     encoder = Sequential(name="Encoder")
-    encoder.add(Dense(dims, input_shape=[63], activation='relu'))
-    # encoder.add(Dense(dims, activation='relu'))
+    encoder.add(Dense(50, input_shape=[63], activation='relu'))
+    encoder.add(Dense(30, activation='relu'))
+    encoder.add(Dense(dims, activation='relu'))
     # for n in range(len(n_neurons_e)):
     # encoder.add(Dense(n_neurons_e[n], activation='relu'))
     print(encoder.summary())
@@ -88,8 +91,9 @@ def auto_encoder(train, val, dims, save_model=False, load_model=False):
     decoder = Sequential(name="Decoder")
     # for n in range(len(n_neurons_d)):
     # decoder.add(Dense(n_neurons_d[n], activation='relu'))   # len(n_neurons_d)-1
-    decoder.add(Dense(63, input_shape=[dims], activation='sigmoid'))
-    # decoder.add(Dense(63, activation='sigmoid'))
+    decoder.add(Dense(30, input_shape=[dims], activation='relu'))
+    decoder.add(Dense(50, activation='relu'))
+    decoder.add(Dense(63, activation='sigmoid'))
     # print(decoder.summary())
 
     # Auto-encoder
@@ -102,6 +106,8 @@ def auto_encoder(train, val, dims, save_model=False, load_model=False):
 
     if save_model:
         autoencoder.save("auto_encoder")
+        encoder.save("encoder")
+        decoder.save("decoder")
 
     return autoencoder, encoder, decoder, history
 
@@ -226,7 +232,7 @@ def count_distribution(data):
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
     d_size = 1000000         # How many shifts are used
-    n_comp = 25             # How many features the feature-space is reduced to
+    n_comp = 10             # How many features the feature-space is reduced to
     encoder_decoder = True  # True if auto-encoder is initialized and trained
     benchmarks = False      # True if benchmarking methods are initialized and trained
     pca = False            # True for only training and testing pca
@@ -238,14 +244,13 @@ if __name__ == '__main__':
     train_set, test_set = train_test_split(dataframe.values, test_size=0.2)
     train_set, val_set = train_test_split(train_set, test_size=0.1)
 
-    # print(test_set[0:3])
-
     # TODO: run on GPU --> make sure cuda installation works
     if encoder_decoder:
 
         # Define and fit auto_encoder
         auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, n_comp)
         restored_data = encoder_predictor(enc, dec, test_set)
+        res_bin = set_binary(restored_data)
 
         # Old evaluation method
         kl_old, jaccard_old = model_evaluation(test_set, restored_data)
