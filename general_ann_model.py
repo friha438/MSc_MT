@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.metrics import MeanAbsoluteError
@@ -46,8 +47,14 @@ def read_scores(size):
 
 
 # Compile and fit general model
-def general_model(x_tr, x_val, y_tr, y_val):
+def general_model(x_tr, x_val, y_tr, y_val, save_model=False, load_model=False):
+    if load_model:
+        loaded_model = tf.keras.models.load_model("general_scoring_model")
+        return loaded_model
+
     model = Sequential(name="GeneralModel")
+    model.add(Dense(512, activation='relu'))
+    model.add(Dense(2048, activation='relu'))
     model.add(Dense(512, activation='relu'))
     # for i in range(4):
     #    model.add(Dense(256, activation='tanh'))
@@ -57,6 +64,9 @@ def general_model(x_tr, x_val, y_tr, y_val):
     history = model.fit(x_tr, y_tr, batch_size=64, epochs=15, validation_data=(x_val, y_val), verbose=1)
 
     print(model.summary())
+
+    if save_model:
+        model.save("general_scoring_model")
 
     return model, history
 
@@ -111,7 +121,7 @@ def model_eval(predicted, actual):
 
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
-    d_size = 1000000   # How much data to use
+    d_size = 3307321   # How much data to use
 
     # Read data
     shift_data = read_data_df(d_size).values
@@ -126,7 +136,7 @@ if __name__ == '__main__':
     X_train, X_valid, y_train, y_valid = train_test_split(X_train, y_train, test_size=0.2, shuffle=True)
 
     # Create and train model
-    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid)
+    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid, save_model=True)
     y_pred = g_model.predict(X_test)
 
     # Evaluate model
