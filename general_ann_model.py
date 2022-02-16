@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import rv_histogram
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
@@ -8,9 +9,13 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.metrics import MeanAbsoluteError
-from tensorflow.keras.optimizers import Adam, SGD
+from tensorflow.keras.optimizers import Adam, SGD, Nadam
 from datetime import datetime
 
+
+#############################
+#       Read data           #
+#############################
 
 # Create dataframe from given data
 def read_data_df(size):
@@ -46,6 +51,130 @@ def read_scores(size):
     return a
 
 
+#####################################
+#      Night shift preferences      #
+#####################################
+
+# Get a list that only displays night shifts
+def get_night_shifts(data):
+    nights = []
+    for i in range(len(data)):
+        n_shifts = []
+        for j in range(2, len(data[i]), 3):
+            n_shifts.append(data[i, j])
+        nights.append(n_shifts)
+    return nights
+
+
+# Count how many night shifts each person has
+def count_nights(data):
+    num_nights = np.array(get_night_shifts(data))
+    n_nights = []
+    for i in range(len(num_nights)):
+        n_nights.append(np.sum(num_nights[i]))
+
+    return n_nights
+
+
+# Create a distribution of night shifts
+def night_distribution(data):
+    n_nights = count_nights(data)
+    night_hist = np.histogram(n_nights, bins=np.arange(11))
+    night_dist = rv_histogram(night_hist)
+
+    return night_dist, n_nights
+
+
+# Create a person to score good on many nights and bad on few
+def night_person(dist, data):
+    n_nights = count_nights(data)
+    static_score = dist.cdf(n_nights)
+    score = np.random.normal(loc=static_score, scale=0.005)
+    for i in range(len(score)):
+        if score[i] > 1:
+            score[i] = 1
+        if score[i] < 0:
+            score[i] = 0
+    return score
+
+
+# Create a person to score good on few nights and bad on many
+def non_night_person(dist, data):
+    n_nights = count_nights(data)
+    static_score_night = dist.cdf(n_nights)
+    score = abs(np.array(static_score_night) - 1)
+    # score = np.random.normal(loc=static_score, scale=0.005)
+    for i in range(len(score)):
+        if score[i] > 1:
+            score[i] = 1
+        if score[i] < 0:
+            score[i] = 0
+    return score
+
+
+#######################################
+#      Weekend shift preferences      #
+#######################################
+
+# Count how many days during the weekends a person works during a roster
+def count_weekends(data):
+    weekend_shifts = []
+    for i in range(len(data)):
+        counter = 0
+        for j in range(14, 20, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        for j in range(35, 41, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        for j in range(56, 62, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        weekend_shifts.append(counter)
+    return weekend_shifts
+
+
+# Find the distribution of worked weekend shifts
+def weekend_distribution(data):
+    weekend_shifts = count_weekends(data)
+    weekend_hist = np.histogram(weekend_shifts, bins=np.arange(11))
+    weekend_dist = rv_histogram(weekend_hist)
+    return weekend_dist, weekend_shifts
+
+
+# Create a person that will score high if there are many weekend shifts
+def weekend_person(dist, data):
+    weekend_shifts = count_weekends(data)
+
+    static_score = dist.cdf(weekend_shifts)
+    score = np.random.normal(loc=static_score, scale=0.005)
+    for i in range(len(score)):
+        if score[i] > 1:
+            score[i] = 1
+        if score[i] < 0:
+            score[i] = 0
+    return score
+
+
+# Create a person that scores low if they have many weekend shifts
+def non_weekend_person(dist, data):
+    weekend_shifts = count_weekends(data)
+
+    static_score_w = dist.cdf(weekend_shifts)
+    score = abs(np.array(static_score_w) - 1)
+    # score = np.random.normal(loc=static_score, scale=0.005)
+    for i in range(len(score)):
+        if score[i] > 1:
+            score[i] = 1
+        if score[i] < 0:
+            score[i] = 0
+    return score
+
+
+#########################################
+#       Create model and evaluate       #
+#########################################
+
 # Compile and fit general model
 def general_model(x_tr, x_val, y_tr, y_val, save_model=False, load_model=False):
     if load_model:
@@ -60,8 +189,9 @@ def general_model(x_tr, x_val, y_tr, y_val, save_model=False, load_model=False):
     #    model.add(Dense(256, activation='tanh'))
     model.add(Dense(1, activation='sigmoid'))
 
-    model.compile(loss='mse', optimizer=Adam(learning_rate=0.001), metrics=MeanAbsoluteError())
-    history = model.fit(x_tr, y_tr, batch_size=64, epochs=15, validation_data=(x_val, y_val), verbose=1)
+    model.compile(loss='mse',
+                  optimizer=Nadam(learning_rate=0.001), metrics=MeanAbsoluteError())
+    history = model.fit(x_tr, y_tr, batch_size=64, epochs=3, validation_data=(x_val, y_val), verbose=1)
 
     print(model.summary())
 
@@ -80,6 +210,8 @@ def plot_training(hist):
     ax[0].set_xlabel("epoch")
     ax[0].set_ylabel("loss")
     ax[0].set_title("Loss")
+    # ax[0].set_xlim(-0.1, 0.1)
+    # ax[0].set_ylim(0.0, 0.1)
     ax[0].grid()
     ax[0].legend()
 
@@ -88,6 +220,8 @@ def plot_training(hist):
     ax[1].set_xlabel("epoch")
     ax[1].set_ylabel("mean absolute error")
     ax[1].set_title("Measure of accuracy")
+    # ax[1].set_xlim(-0.1, 0.1)
+    # ax[1].set_ylim(0.0, 0.2)
     ax[1].grid()
     ax[1].legend()
     plt.show()
@@ -119,9 +253,28 @@ def model_eval(predicted, actual):
     return rmse, r2
 
 
+#############################
+#       Weigh scores        #
+#############################
+
+# Weigh the personal scoring with general scoring to get a final score
+def weigh_scores(g_scores, p_scores, w=0.3):
+    f_scores = []
+    for i in range(len(g_scores)):
+        f_scores.append(w * p_scores[i] + (1-w) * g_scores[i])
+    return np.array(f_scores)
+
+
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
-    d_size = 3307321   # How much data to use
+    # d_size = 3307321   # How much data to use
+    d_size = 1000000
+    get_pers_scores = True
+    create_sets = True
+    morph_sets = True
+    per_d = 50000
+    per_t = 5000
+    w = 0.2
 
     # Read data
     shift_data = read_data_df(d_size).values
@@ -131,12 +284,59 @@ if __name__ == '__main__':
     scaler = MinMaxScaler()
     sc_scores = scaler.fit_transform(shift_scores.reshape(-1, 1))
 
-    # split data for training, validation, and testing
+    if get_pers_scores:
+        n_distr, n_shifts = night_distribution(shift_data[:10000])
+        n_scores = weigh_scores(sc_scores[:per_d],
+                                night_person(n_distr, shift_data[:per_d]), w=w)
+        n_scores_val = weigh_scores(sc_scores[per_d:per_d+per_t],
+                                    night_person(n_distr, shift_data[per_d:per_d+per_t]), w=w)
+        n_scores_test = weigh_scores(sc_scores[per_d+per_t:per_d+2*per_t],
+                                     night_person(n_distr, shift_data[per_d+per_t:per_d+2*per_t]), w=w)
+
+        nn_scores = weigh_scores(sc_scores[per_d+2*per_t:2*per_d+2*per_t],
+                                 non_night_person(n_distr, shift_data[per_d+2*per_t:2*per_d+2*per_t]), w=w)
+        nn_scores_val = weigh_scores(sc_scores[2*per_d+2*per_t:2*per_d+3*per_t],
+                                     non_night_person(n_distr, shift_data[2*per_d+2*per_t:2*per_d+3*per_t]), w=w)
+        nn_scores_test = weigh_scores(sc_scores[2*per_d+3*per_t:2*per_d+4*per_t],
+                                      non_night_person(n_distr, shift_data[2*per_d+3*per_t:2*per_d+4*per_t]), w=w)
+
+        w_distr, w_shifts = weekend_distribution(shift_data[:100000])
+        w_scores = weigh_scores(sc_scores[2*per_d+4*per_t:3*per_d+4*per_t],
+                                weekend_person(w_distr, shift_data[2*per_d+4*per_t:3*per_d+4*per_t]), w=w)
+        w_scores_val = weigh_scores(sc_scores[3*per_d+4*per_t:3*per_d+5*per_t],
+                                    weekend_person(w_distr, shift_data[3*per_d+4*per_t:3*per_d+5*per_t]), w=w)
+        w_scores_test = weigh_scores(sc_scores[3*per_d+5*per_t:3*per_d+6*per_t],
+                                     weekend_person(w_distr, shift_data[3*per_d+5*per_t:3*per_d+6*per_t]), w=w)
+
+        nw_scores = weigh_scores(sc_scores[3*per_d+6*per_t:4*per_d+6*per_t],
+                                 non_weekend_person(w_distr, shift_data[3*per_d+6*per_t:4*per_d+6*per_t]), w=w)
+        nw_scores_val = weigh_scores(sc_scores[4*per_d+6*per_t:4*per_d+7*per_t],
+                                     non_weekend_person(w_distr, shift_data[4*per_d+6*per_t:4*per_d+7*per_t]), w=w)
+        nw_scores_test = weigh_scores(sc_scores[4*per_d+7*per_t:4*per_d+8*per_t],
+                                      non_weekend_person(w_distr, shift_data[4*per_d+7*per_t:4*per_d+8*per_t]), w=w)
+
+    if create_sets:
+        sc_scores[:per_d] = n_scores
+        sc_scores[per_d:per_d+per_t] = n_scores_val
+        sc_scores[per_d+per_t:per_d+2*per_t] = n_scores_test
+
+        sc_scores[per_d+2*per_t:2*per_d+2*per_t] = nn_scores
+        sc_scores[2*per_d+2*per_t:2*per_d+3*per_t] = nn_scores_val
+        sc_scores[2*per_d+3*per_t:2*per_d+4*per_t] = nn_scores_test
+
+        sc_scores[2*per_d+4*per_t:3*per_d+4*per_t] = w_scores
+        sc_scores[3*per_d+4*per_t:3*per_d+5*per_t] = w_scores_val
+        sc_scores[3*per_d+5*per_t:3*per_d+6*per_t] = w_scores_test
+
+        sc_scores[3*per_d+6*per_t:4*per_d+6*per_t] = nw_scores
+        sc_scores[4*per_d+6*per_t:4*per_d+7*per_t] = nw_scores_val
+        sc_scores[4*per_d+7*per_t:4*per_d+8*per_t] = nw_scores_test
+
     X_train, X_test, y_train, y_test = train_test_split(shift_data, sc_scores, test_size=0.2, shuffle=True)
     X_train, X_valid, y_train, y_valid = train_test_split(X_train, y_train, test_size=0.2, shuffle=True)
 
     # Create and train model
-    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid, save_model=True)
+    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid)
     y_pred = g_model.predict(X_test)
 
     # Evaluate model
