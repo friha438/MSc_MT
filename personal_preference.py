@@ -9,7 +9,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.metrics import MeanAbsoluteError
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import SGD
 from datetime import datetime
 
 
@@ -94,7 +94,7 @@ def night_distribution(data):
 def night_person(dist, data):
     n_nights = count_nights(data)
     static_score = dist.cdf(n_nights)
-    score = np.random.normal(loc=static_score, scale=0.03)
+    score = np.random.normal(loc=static_score, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
             score[i] = 1
@@ -107,8 +107,8 @@ def night_person(dist, data):
 def non_night_person(dist, data):
     n_nights = count_nights(data)
     static_score_night = dist.cdf(n_nights)
-    static_score = abs(np.array(static_score_night) - 1)
-    score = np.random.normal(loc=static_score, scale=0.03)
+    score = abs(np.array(static_score_night) - 1)
+    # score = np.random.normal(loc=static_score, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
             score[i] = 1
@@ -152,7 +152,7 @@ def weekend_person(dist, data):
     weekend_shifts = count_weekends(data)
 
     static_score = dist.cdf(weekend_shifts)
-    score = np.random.normal(loc=static_score, scale=0.03)
+    score = np.random.normal(loc=static_score, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
             score[i] = 1
@@ -166,8 +166,8 @@ def non_weekend_person(dist, data):
     weekend_shifts = count_weekends(data)
 
     static_score_w = dist.cdf(weekend_shifts)
-    static_score = abs(np.array(static_score_w) - 1)
-    score = np.random.normal(loc=static_score, scale=0.03)
+    score = abs(np.array(static_score_w) - 1)
+    # score = np.random.normal(loc=static_score, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
             score[i] = 1
@@ -204,7 +204,7 @@ def weigh_scores(g_scores, p_scores, w=0.3):
 
 # Compile and fit pp model
 def personal_preference_model(x_train, x_val, y_train, y_val):
-    loaded_model = tf.keras.models.load_model("general_scoring_model")
+    loaded_model = tf.keras.models.load_model("g_scoring_model_new")
 
     # Freeze some layers
     for layer in loaded_model.layers[:3]:
@@ -214,19 +214,18 @@ def personal_preference_model(x_train, x_val, y_train, y_val):
     for layer in loaded_model.layers:
         print(layer, layer.trainable)
 
-    # for layer in loaded_model.layers[0:3]:
-        # model.add(layer)
-
     model = Sequential(name="PersonalPreferenceModel")
+    # for layer in loaded_model.layers[0:3]:
+    # model.add(layer)
 
-    # model.add(loaded_model)
+    model.add(loaded_model)
     # model.add(Dense(512, activation='relu', name="new_layer"))
-    model.add(Dense(256, activation='relu'))
-    model.add(Dense(128, activation='relu'))
-    model.add(Dense(1, activation='sigmoid', name="fine_tune"))
+    # model.add(Dense(256, activation='relu'))
+    # model.add(Dense(128, activation='relu'))
+    # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
-    model.compile(loss='mse', optimizer=Adam(learning_rate=0.001), metrics=MeanAbsoluteError())  # Add accuracy
-    history = model.fit(x_train, y_train, batch_size=64, epochs=20, validation_data=(x_val, y_val), verbose=0)
+    model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
+    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, validation_data=(x_val, y_val), verbose=0)
 
     print(model.summary())
 
@@ -313,7 +312,7 @@ if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
     d_size = 100000  # How many shifts are used
     d_s = 3307321    # Read all scores (To scale them right)
-    q_answers = 20000  # How many scored rosters there are
+    q_answers = 10000  # How many scored rosters there are
     test_d = 1000    # How many data points used for testing
     weight = 0.4
     get_preferences = True
@@ -334,7 +333,7 @@ if __name__ == '__main__':
     train_X, test_X, train_y, test_y = train_test_split(dataframe.values, scores_f, test_size=0.2, shuffle=False)
 
     # Load the pre-trained model (to compare against fine-tuned model)
-    loaded_model2 = tf.keras.models.load_model("general_scoring_model")
+    loaded_model2 = tf.keras.models.load_model("g_scoring_model_new")
     preds = loaded_model2.predict(train_X)
 
     if get_preferences:
@@ -342,30 +341,32 @@ if __name__ == '__main__':
         w_dist, w_shifts = weekend_distribution(train_X)
         nw_scores = non_weekend_person(w_dist, train_X[:q_answers])     # Get raw scores (q_answers)
         nw_scores, nw_scores_val = train_test_split(nw_scores, test_size=0.2, shuffle=False)
-        nw_scores_test = non_weekend_person(w_dist, test_X)     # Get raw test scores
+        nw_scores_test = non_weekend_person(w_dist, test_X[:test_d])     # Get raw test scores
 
         morning_shifts, evening_shifts, night_shifts = get_time_shifts(train_X)
         morning_shifts_test, evening_shifts_test, night_shifts_test = get_time_shifts(test_X)
         n_distr = night_distribution(night_shifts)
-        n_scores = night_person(n_distr, night_shifts[:q_answers])
+        n_scores = non_night_person(n_distr, night_shifts[:q_answers])
         n_scores, n_scores_val = train_test_split(n_scores, test_size=0.2, shuffle=False)
-        n_scores_test = night_person(n_distr, test_X)
+        n_scores_test = non_night_person(n_distr, test_X)
 
-        weighted = weigh_scores(n_scores, nw_scores, w=0.2)
-        weighted_test = weigh_scores(n_scores_test, nw_scores_test, w=0.2)
+        '''
+        weighted = weigh_scores(n_scores, nw_scores, w=1)
+        weighted_test = weigh_scores(n_scores_test, nw_scores_test, w=1)
         n_nights = count_nights(night_shifts)
 
         figure, ax = plt.subplots(1, 2, figsize=(12, 5))
         ax[0].plot(w_shifts[:len(weighted)], weighted, 'o')
         ax[1].plot(n_nights[:len(weighted)], weighted, 'x')
         plt.show()
+        '''
 
-        # nw_weighted = weigh_scores(train_y[:len(nw_scores)], nw_scores, w=weight)
-        # nw_weighted_val = weigh_scores(train_y[len(nw_scores):q_answers], nw_scores_val, w=weight)
-        # nw_weighted_test = weigh_scores(test_y[:test_d], nw_scores_test, w=weight)
+        nw_weighted = weigh_scores(train_y[:len(nw_scores)], nw_scores, w=weight)
+        nw_weighted_val = weigh_scores(train_y[len(nw_scores):q_answers], nw_scores_val, w=weight)
+        nw_weighted_test = weigh_scores(test_y[:test_d], nw_scores_test, w=weight)
 
     if PP_model:
-        '''
+
         # Create and train model
         pp_model_w, pp_hist_w = personal_preference_model(train_X[:len(nw_scores)],             # Training data
                                                           train_X[len(nw_scores):q_answers],    # Validation data
@@ -387,18 +388,18 @@ if __name__ == '__main__':
         preds2 = loaded_model2.predict(test_X[:len(nw_scores)])
         plot_training(pp_hist_w)
         plot_predictions(pred_val_w, preds2, nw_weighted_test[:len(nw_scores)], test_y[:len(nw_scores)])
-        '''
 
     if PP_model_iter:
 
-        w = 0.5
-        data_used = np.arange(1000, 10000, 1000)
+        # w = 0.5
+        weights = np.arange(0.0, 1.1, 0.1)
+        d = 1000
         rmse_w = []
         r2_w = []
 
-        for d in data_used:
-            nw_weighted = weigh_scores(train_y[:len(nw_scores)], weighted, w=w)
-            nw_weighted_test = weigh_scores(test_y[:test_d], weighted_test, w=w)
+        for w in weights:
+            nw_weighted = weigh_scores(train_y[:len(nw_scores)], nw_scores, w=w)
+            nw_weighted_test = weigh_scores(test_y[:test_d], nw_scores_test, w=w)
 
             # Create and train model
             pp_model_w, pp_hist_w = personal_preference_model(train_X[:d], train_X[d:d+30],
@@ -411,16 +412,20 @@ if __name__ == '__main__':
             rmse_w.append(rmse_score_w)
             r2_w.append(r2_score_w)
 
+        preds2 = loaded_model2.predict(test_X[:test_d])
+        plot_training(pp_hist_w)
+        plot_predictions(pred_val_w, preds2, nw_weighted_test[:test_d], test_y[:test_d])
+
         figure, ax = plt.subplots(1, 2, figsize=(12, 5))
 
-        ax[0].plot(data_used, rmse_w, label="RMSE weekend")
-        ax[0].set_xlabel("Data used for training")
+        ax[0].plot(weights, rmse_w, label="RMSE weekend")
+        ax[0].set_xlabel("Weights")
         ax[0].set_ylabel("RMSE")
         ax[0].grid()
         ax[0].legend()
 
-        ax[1].plot(data_used, r2_w, label="R2-score weekend")
-        ax[1].set_xlabel("Data used for training")
+        ax[1].plot(weights, r2_w, label="R2-score weekend")
+        ax[1].set_xlabel("Weights")
         ax[1].set_ylabel("R2 score")
         ax[1].grid()
         ax[1].legend()

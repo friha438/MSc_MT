@@ -6,6 +6,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.metrics import MeanAbsoluteError
@@ -175,11 +176,25 @@ def non_weekend_person(dist, data):
 #       Create model and evaluate       #
 #########################################
 
+class LossHistory(keras.callbacks.Callback):
+    def on_train_begin(self, logs={}):
+        self.history = {'loss':[],'val_loss':[]}
+
+    def on_batch_end(self, batch, logs={}):
+        self.history['loss'].append(logs.get('loss'))
+
+    def on_epoch_end(self, epoch, logs={}):
+        self.history['val_loss'].append(logs.get('val_loss'))
+
+
 # Compile and fit general model
 def general_model(x_tr, x_val, y_tr, y_val, save_model=False, load_model=False):
+
     if load_model:
         loaded_model = tf.keras.models.load_model("general_scoring_model")
         return loaded_model
+
+    history = LossHistory()
 
     model = Sequential(name="GeneralModel")
     model.add(Dense(512, activation='relu'))
@@ -191,30 +206,32 @@ def general_model(x_tr, x_val, y_tr, y_val, save_model=False, load_model=False):
 
     model.compile(loss='mse',
                   optimizer=Nadam(learning_rate=0.001), metrics=MeanAbsoluteError())
-    history = model.fit(x_tr, y_tr, batch_size=64, epochs=3, validation_data=(x_val, y_val), verbose=1)
+    model.fit(x_tr, y_tr, batch_size=64, epochs=1,
+              validation_data=(x_val, y_val), verbose=1, callbacks=[history])
 
     print(model.summary())
 
     if save_model:
-        model.save("general_scoring_model")
+        model.save("g_scoring_model_new")
 
     return model, history
 
 
 # Plot the training history over epochs
 def plot_training(hist):
-    figure, ax = plt.subplots(1, 2, figsize=(12, 5))
+    figure, ax = plt.subplots(1, 1, figsize=(5, 5))
 
-    ax[0].plot(hist.history['loss'], label="training")
-    ax[0].plot(hist.history['val_loss'], label="validation")
-    ax[0].set_xlabel("epoch")
-    ax[0].set_ylabel("loss")
-    ax[0].set_title("Loss")
+    ax.plot(hist.history['loss'], label="training")
+    ax.plot(hist.history['val_loss'], label="validation")
+    ax.set_xlabel("batch")
+    ax.set_ylabel("loss")
+    ax.set_title("Loss")
     # ax[0].set_xlim(-0.1, 0.1)
     # ax[0].set_ylim(0.0, 0.1)
-    ax[0].grid()
-    ax[0].legend()
+    ax.grid()
+    ax.legend()
 
+    '''
     ax[1].plot(hist.history['mean_absolute_error'], label="training")
     ax[1].plot(hist.history['val_mean_absolute_error'], label="validation")
     ax[1].set_xlabel("epoch")
@@ -225,6 +242,7 @@ def plot_training(hist):
     ax[1].grid()
     ax[1].legend()
     plt.show()
+    '''
 
 
 # Plot the predictions against real values
@@ -268,12 +286,11 @@ def weigh_scores(g_scores, p_scores, w=0.3):
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
     # d_size = 3307321   # How much data to use
-    d_size = 1000000
-    get_pers_scores = True
-    create_sets = True
-    morph_sets = True
-    per_d = 50000
-    per_t = 5000
+    d_size = 100000
+    get_pers_scores = False
+    create_sets = False
+    per_d = int(0.05*d_size)
+    per_t = int(0.1*per_d)
     w = 0.2
 
     # Read data
@@ -283,7 +300,7 @@ if __name__ == '__main__':
     # Scale the scores
     scaler = MinMaxScaler()
     sc_scores = scaler.fit_transform(shift_scores.reshape(-1, 1))
-
+    
     if get_pers_scores:
         n_distr, n_shifts = night_distribution(shift_data[:10000])
         n_scores = weigh_scores(sc_scores[:per_d],
@@ -300,7 +317,7 @@ if __name__ == '__main__':
         nn_scores_test = weigh_scores(sc_scores[2*per_d+3*per_t:2*per_d+4*per_t],
                                       non_night_person(n_distr, shift_data[2*per_d+3*per_t:2*per_d+4*per_t]), w=w)
 
-        w_distr, w_shifts = weekend_distribution(shift_data[:100000])
+        w_distr, w_shifts = weekend_distribution(shift_data[:10000])
         w_scores = weigh_scores(sc_scores[2*per_d+4*per_t:3*per_d+4*per_t],
                                 weekend_person(w_distr, shift_data[2*per_d+4*per_t:3*per_d+4*per_t]), w=w)
         w_scores_val = weigh_scores(sc_scores[3*per_d+4*per_t:3*per_d+5*per_t],
@@ -336,7 +353,7 @@ if __name__ == '__main__':
     X_train, X_valid, y_train, y_valid = train_test_split(X_train, y_train, test_size=0.2, shuffle=True)
 
     # Create and train model
-    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid)
+    g_model, g_history = general_model(X_train, X_valid, y_train, y_valid, save_model=True)
     y_pred = g_model.predict(X_test)
 
     # Evaluate model
@@ -347,3 +364,19 @@ if __name__ == '__main__':
 
     plot_training(g_history)
     plot_predictions(y_pred, y_test)
+
+    '''
+    res_rmse = np.array([0.0864, 0.0793, 0.0607, 0.0552, 0.0537, 0.0507, 0.0465, 0.0436, 0.0421])
+    res_r2 = np.array([0.7257, 0.7642, 0.8377, 0.8644, 0.8704, 0.8851, 0.9035, 0.9153, 0.9215])
+    train_data = np.array([100000, 200000, 500000, 800000, 1000000, 1200000, 1500000, 1800000, 2000000])
+
+    plt.plot(train_data, res_rmse)
+    plt.xlabel("Data used")
+    plt.ylabel("RMSE score")
+    plt.show()
+
+    plt.plot(train_data, res_r2)
+    plt.xlabel("Data used")
+    plt.ylabel("R2 score")
+    plt.show()
+    '''
