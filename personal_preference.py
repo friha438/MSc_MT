@@ -12,6 +12,9 @@ from tensorflow.keras.metrics import MeanAbsoluteError
 from tensorflow.keras.optimizers import SGD
 from datetime import datetime
 
+from mpl_toolkits.mplot3d import axes3d
+from matplotlib import style
+
 
 #############################
 #       Read data           #
@@ -41,6 +44,16 @@ def split_to_values(row):
     return result
 
 
+# Read scores given for each shift
+def read_scores(size):
+    a = []
+    f = open("scores.txt", "r")
+    for i in range(size):
+        r = float(f.readline())
+        a.append(r)
+    return a
+
+
 ##########################################
 #      Split shifts based on timing      #
 ##########################################
@@ -54,7 +67,7 @@ def get_time_shifts(data):
         m_shifts = []
         e_shifts = []
         n_shifts = []
-        for j in range(0, len(data[i]), 3):
+        for j in range(0, len(data[i]), 3):     # Go through each day (3 shifts)
             for k in range(3):
                 if k == 0:
                     m_shifts.append(data[i, j])
@@ -87,34 +100,7 @@ def night_distribution(data):
     night_hist = np.histogram(n_nights, bins=np.arange(11))
     night_dist = rv_histogram(night_hist)
 
-    return night_dist
-
-
-# Create a person to score good on many nights and bad on few
-def night_person(dist, data):
-    n_nights = count_nights(data)
-    static_score = dist.cdf(n_nights)
-    score = np.random.normal(loc=static_score, scale=0.005)
-    for i in range(len(score)):
-        if score[i] > 1:
-            score[i] = 1
-        if score[i] < 0:
-            score[i] = 0
-    return score
-
-
-# Create a person to score good on few nights and bad on many
-def non_night_person(dist, data):
-    n_nights = count_nights(data)
-    static_score_night = dist.cdf(n_nights)
-    score = abs(np.array(static_score_night) - 1)
-    # score = np.random.normal(loc=static_score, scale=0.005)
-    for i in range(len(score)):
-        if score[i] > 1:
-            score[i] = 1
-        if score[i] < 0:
-            score[i] = 0
-    return score
+    return night_dist, n_nights
 
 
 #######################################
@@ -147,11 +133,56 @@ def weekend_distribution(data):
     return weekend_dist, weekend_shifts
 
 
-# Create a person that will score high if there are many weekend shifts
-def weekend_person(dist, data):
-    weekend_shifts = count_weekends(data)
+##################################################
+#      2 Consecutive days shift preferences      #
+##################################################
 
-    static_score = dist.cdf(weekend_shifts)
+# Count how many shifts of 2 chosen consecutive days a person has worked
+def count_weekdays(data, start, end):
+    shifts_week = 21    # How many shifts there are in 1 week
+    weekday_shifts = []
+    for i in range(len(data)):
+        counter = 0
+        for j in range(start, end, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        for j in range(start + shifts_week, end + shifts_week, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        for j in range(start + 2*shifts_week, end + 2*shifts_week, 1):
+            if data[i, j] == 1:
+                counter = counter + 1
+        weekday_shifts.append(counter)
+    return weekday_shifts
+
+
+def get_day_index(days):
+    if days == "tue_wed":
+        return 3, 8
+    elif days == "wed_thu":
+        return 6, 11
+    elif days == "thu_fri":
+        return 9, 14
+    else:
+        return 0, 5     # As a default check Monday and Tuesday
+
+
+# Find the distribution of 2 chosen consecutive days
+def weekday_distribution(data, days):
+    start, end = get_day_index(days)
+    weekday_shifts = count_weekdays(data, start=start, end=end)
+    weekday_hist = np.histogram(weekday_shifts, bins=np.arange(11))
+    weekday_dist = rv_histogram(weekday_hist)
+    return weekday_dist, weekday_shifts
+
+
+#########################################
+#      Create and weigh preferences     #
+#########################################
+
+# Create a person that gives good scores for many shifts of one type
+def positive_corr_person(dist, n_shifts):
+    static_score = dist.cdf(n_shifts)
     score = np.random.normal(loc=static_score, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
@@ -161,13 +192,11 @@ def weekend_person(dist, data):
     return score
 
 
-# Create a person that scores low if they have many weekend shifts
-def non_weekend_person(dist, data):
-    weekend_shifts = count_weekends(data)
-
-    static_score_w = dist.cdf(weekend_shifts)
-    score = abs(np.array(static_score_w) - 1)
-    # score = np.random.normal(loc=static_score, scale=0.005)
+# Create a person that gives poor scores for many shifts of one type
+def negative_corr_person(dist, n_shifts):
+    static_score = dist.cdf(n_shifts)
+    score_inv = abs(np.array(static_score) - 1)
+    score = np.random.normal(loc=score_inv, scale=0.005)
     for i in range(len(score)):
         if score[i] > 1:
             score[i] = 1
@@ -176,22 +205,8 @@ def non_weekend_person(dist, data):
     return score
 
 
-###############################################
-#      Combine pref with general scoring      #
-###############################################
-
-# Read scores given for each shift
-def read_scores(size):
-    a = []
-    f = open("scores.txt", "r")
-    for i in range(size):
-        r = float(f.readline())
-        a.append(r)
-    return a
-
-
-# Weigh the personal scoring with general scoring to get a final score
-def weigh_scores(g_scores, p_scores, w=0.3):
+# Weigh the two types of scoring to create new scoring
+def weigh_scores(g_scores, p_scores, w=0.5):
     f_scores = []
     for i in range(len(g_scores)):
         f_scores.append(w * p_scores[i] + (1-w) * g_scores[i])
@@ -225,7 +240,7 @@ def personal_preference_model(x_train, x_val, y_train, y_val):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, validation_data=(x_val, y_val), verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, epochs=500, validation_data=(x_val, y_val), verbose=0)
 
     print(model.summary())
 
@@ -253,23 +268,6 @@ def plot_training(hist1):
     ax[1].legend()
 
     plt.show()
-
-    '''
-    ax[0, 1].plot(hist2.history['loss'], label="training")
-    ax[0, 1].plot(hist2.history['val_loss'], label="validation")
-    ax[0, 1].set_xlabel("epoch")
-    ax[0, 1].set_ylabel("loss")
-    ax[0, 1].set_title("Training on weekend person data")
-    ax[0, 1].grid()
-    ax[0, 1].legend()
-
-    ax[1, 1].plot(hist2.history['mean_absolute_error'], label="training")
-    ax[1, 1].plot(hist2.history['val_mean_absolute_error'], label="validation")
-    ax[1, 1].set_xlabel("epoch")
-    ax[1, 1].set_ylabel("mean absolute error")
-    ax[1, 1].grid()
-    ax[1, 1].legend()
-    '''
 
 
 # Plot the predictions against real values
@@ -314,11 +312,10 @@ if __name__ == '__main__':
     d_s = 3307321    # Read all scores (To scale them right)
     q_answers = 10000  # How many scored rosters there are
     test_d = 1000    # How many data points used for testing
-    weight = 0.4
+    weight = 0.3
     get_preferences = True
-    PP_model = False    # If set to true, then night_p also needs to be true
-    PP_model_iter = True
-    other = False
+    PP_model = False    # If set to true, then get_preferences also needs to be true
+    PP_model_iter = True    # If set to true, then get_preferences also needs to be true
 
     # Read data
     dataframe = read_data_df(d_size)
@@ -337,101 +334,125 @@ if __name__ == '__main__':
     preds = loaded_model2.predict(train_X)
 
     if get_preferences:
-        # Score data based on defined preferences regarding weekend shifts
-        w_dist, w_shifts = weekend_distribution(train_X)
-        nw_scores = non_weekend_person(w_dist, train_X[:q_answers])     # Get raw scores (q_answers)
-        nw_scores, nw_scores_val = train_test_split(nw_scores, test_size=0.2, shuffle=False)
-        nw_scores_test = non_weekend_person(w_dist, test_X[:test_d])     # Get raw test scores
-
+        # Get different shifts of the day
         morning_shifts, evening_shifts, night_shifts = get_time_shifts(train_X)
         morning_shifts_test, evening_shifts_test, night_shifts_test = get_time_shifts(test_X)
-        n_distr = night_distribution(night_shifts)
-        n_scores = non_night_person(n_distr, night_shifts[:q_answers])
-        n_scores, n_scores_val = train_test_split(n_scores, test_size=0.2, shuffle=False)
-        n_scores_test = non_night_person(n_distr, test_X)
 
-        '''
-        weighted = weigh_scores(n_scores, nw_scores, w=1)
-        weighted_test = weigh_scores(n_scores_test, nw_scores_test, w=1)
-        n_nights = count_nights(night_shifts)
+        # Score data based on liking nights
+        n_distr, number_nights = night_distribution(night_shifts)
+        n_distr_test, number_nights_test = night_distribution(night_shifts_test)
+        n_scores = positive_corr_person(n_distr, number_nights[:q_answers])
+        # n_scores, n_scores_val = train_test_split(n_scores, test_size=0.2, shuffle=False)
+        n_scores_test = positive_corr_person(n_distr, number_nights_test[:test_d])
 
-        figure, ax = plt.subplots(1, 2, figsize=(12, 5))
-        ax[0].plot(w_shifts[:len(weighted)], weighted, 'o')
-        ax[1].plot(n_nights[:len(weighted)], weighted, 'x')
-        plt.show()
-        '''
+        # Score data based on liking weekends
+        w_dist, w_shifts = weekend_distribution(train_X)
+        w_dist_test, w_shifts_test = weekend_distribution(test_X)
+        w_scores = positive_corr_person(w_dist, w_shifts[:q_answers])
+        # w_scores, w_scores_val = train_test_split(w_scores, test_size=0.2, shuffle=False)
+        w_scores_test = positive_corr_person(w_dist, w_shifts_test[:test_d])
 
-        nw_weighted = weigh_scores(train_y[:len(nw_scores)], nw_scores, w=weight)
-        nw_weighted_val = weigh_scores(train_y[len(nw_scores):q_answers], nw_scores_val, w=weight)
-        nw_weighted_test = weigh_scores(test_y[:test_d], nw_scores_test, w=weight)
+        # Score data based on liking 2 specific consecutive days
+        wd_dist, wd_shifts = weekday_distribution(train_X, "tue_wed")
+        wd_dist_test, wd_shifts_test = weekday_distribution(test_X, "tue_wed")
+        wd_scores = positive_corr_person(wd_dist, wd_shifts[:q_answers])
+        # wd_scores, wd_scores_val = train_test_split(wd_scores, test_size=0.2, shuffle=False)
+        wd_scores_test = positive_corr_person(wd_dist, wd_shifts_test[:test_d])
+
+        # Weigh preferences to have more complex wishes
+        weighted = weigh_scores(wd_scores, n_scores, w=weight)
+        weighted_test = weigh_scores(wd_scores_test, n_scores_test, w=weight)
+
+        # Plot distribution of scores based on given weights
+        # figure, ax = plt.subplots(1, 2, figsize=(12, 5))
+        # ax[0].plot(number_nights[:len(weighted)], weighted, 'o')
+        # ax[1].plot(wd_shifts[:len(weighted)], weighted, 'x')
+        # plt.show()
 
     if PP_model:
+        '''
+        d = 100     # Data points used for training
+        d_val = 30  # How many data points are used for validation
+
+        final_weighted = weigh_scores(train_y[:d], weighted[:d], w=weight)
+        final_weighted_val = weigh_scores(train_y[d:d+d_val], weighted[d:d+d_val], w=weight)
+        final_weighted_test = weigh_scores(test_y[:test_d], weighted_test[:test_d], w=weight)
 
         # Create and train model
-        pp_model_w, pp_hist_w = personal_preference_model(train_X[:len(nw_scores)],             # Training data
-                                                          train_X[len(nw_scores):q_answers],    # Validation data
-                                                          # train_y[:len(nw_scores)],
-                                                          # train_y[len(nw_scores):q_answers])
-                                                          nw_weighted, nw_weighted_val)         # Train and val data
+        pp_model_w, pp_hist_w = personal_preference_model(train_X[:d], train_X[d:d+d_val],
+                                                          final_weighted, final_weighted_val)
 
         # Predict and evaluate
         pred_val_w = pp_model_w.predict(test_X[:test_d])
-        rmse_score_w, r2_score_w = model_eval(pred_val_w, nw_weighted_test[:test_d])
+        rmse_score_w, r2_score_w = model_eval(pred_val_w, final_weighted_test)
 
         print("Execution time: ", datetime.now() - startTime)
         print("RMSE (weekend person): ", rmse_score_w)
         print("R2 (weekend person): ", r2_score_w)
 
-        plt.plot(w_shifts[0:len(nw_weighted)], nw_weighted, 'o')
+        plt.plot(w_shifts[:len(final_weighted)], final_weighted, 'o')
         plt.show()
-
-        preds2 = loaded_model2.predict(test_X[:len(nw_scores)])
-        plot_training(pp_hist_w)
-        plot_predictions(pred_val_w, preds2, nw_weighted_test[:len(nw_scores)], test_y[:len(nw_scores)])
-
-    if PP_model_iter:
-
-        # w = 0.5
-        weights = np.arange(0.0, 1.1, 0.1)
-        d = 1000
-        rmse_w = []
-        r2_w = []
-
-        for w in weights:
-            nw_weighted = weigh_scores(train_y[:len(nw_scores)], nw_scores, w=w)
-            nw_weighted_test = weigh_scores(test_y[:test_d], nw_scores_test, w=w)
-
-            # Create and train model
-            pp_model_w, pp_hist_w = personal_preference_model(train_X[:d], train_X[d:d+30],
-                                                              nw_weighted[:d], nw_weighted[d:d+30])
-
-            # Predict and evaluate
-            pred_val_w = pp_model_w.predict(test_X[:test_d])
-            rmse_score_w, r2_score_w = model_eval(pred_val_w, nw_weighted_test[:test_d])
-
-            rmse_w.append(rmse_score_w)
-            r2_w.append(r2_score_w)
 
         preds2 = loaded_model2.predict(test_X[:test_d])
         plot_training(pp_hist_w)
-        plot_predictions(pred_val_w, preds2, nw_weighted_test[:test_d], test_y[:test_d])
+        plot_predictions(pred_val_w, preds2, final_weighted_test[:test_d], test_y[:test_d])
+        '''
+    if PP_model_iter:
+        weight_step = 0.1
+        data_step = 50
+        weights = np.arange(0.0, 1.05, weight_step)
+        data_used = np.arange(50, 551, data_step)
 
-        figure, ax = plt.subplots(1, 2, figsize=(12, 5))
+        rmse_w = []
+        r2_w = []
+        x_weights = []
+        y_data = []
 
-        ax[0].plot(weights, rmse_w, label="RMSE weekend")
-        ax[0].set_xlabel("Weights")
-        ax[0].set_ylabel("RMSE")
-        ax[0].grid()
-        ax[0].legend()
+        for w in weights:
+            if len(weights) != len(data_used):
+                print("weights and data used are of different lengths!")
+                break
+            for d in data_used:
+                print("Weight: ", w, "Data used:", d)
+                final_weighted = weigh_scores(train_y[:q_answers], n_scores, w=w)
+                final_weighted_test = weigh_scores(test_y[:test_d], n_scores_test, w=w)
 
-        ax[1].plot(weights, r2_w, label="R2-score weekend")
-        ax[1].set_xlabel("Weights")
-        ax[1].set_ylabel("R2 score")
-        ax[1].grid()
-        ax[1].legend()
+                # Create and train model
+                pp_model_w, pp_hist_w = personal_preference_model(train_X[:d], train_X[d:d+30],
+                                                                  final_weighted[:d], final_weighted[d:d+30])
+
+                # Predict and evaluate
+                pred_val_w = pp_model_w.predict(test_X[:test_d])
+                rmse_score_w, r2_score_w = model_eval(pred_val_w, final_weighted_test[:test_d])
+
+                x_weights.append(w)
+                y_data.append(d)
+                rmse_w.append(rmse_score_w)
+                r2_w.append(r2_score_w)
+
+        rmse_res = np.array(rmse_w)
+
+        style.use('ggplot')
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+
+        x3 = np.array(x_weights)-weight_step/2
+        y3 = np.array(y_data)-data_step/2
+        z3 = np.zeros(len(x_weights))
+
+        dx = weight_step*np.ones(len(x_weights))
+        dy = data_step*np.ones(len(x_weights))
+        dz = rmse_res
+
+        ax1.bar3d(x3, y3, z3, dx, dy, dz)
+
+        ax1.set_xlabel('Weights')
+        ax1.set_ylabel('Data used')
+        ax1.set_zlabel('RMSE')
 
         plt.show()
 
+    other = False
     if other:
         '''
         morning_shifts, evening_shifts, night_shifts = get_time_shifts(train_set)
@@ -490,5 +511,27 @@ if __name__ == '__main__':
         plt.xticks(range(12))
         plt.xlabel("Number of night shifts in a roster per person")
         plt.ylabel("Distribution of night shifts in rosters")
+        plt.show()
+        '''
+
+        '''
+        preds2 = loaded_model2.predict(test_X[:test_d])
+        plot_training(pp_hist_w)
+        plot_predictions(pred_val_w, preds2, final_weighted_test[:test_d], test_y[:test_d])
+
+        figure, ax = plt.subplots(1, 2, figsize=(12, 5))
+
+        ax[0].plot(weights, rmse_w, label="RMSE weekend")
+        ax[0].set_xlabel("Weights")
+        ax[0].set_ylabel("RMSE")
+        ax[0].grid()
+        ax[0].legend()
+
+        ax[1].plot(weights, r2_w, label="R2-score weekend")
+        ax[1].set_xlabel("Weights")
+        ax[1].set_ylabel("R2 score")
+        ax[1].grid()
+        ax[1].legend()
+
         plt.show()
         '''
