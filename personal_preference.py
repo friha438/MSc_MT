@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
-from tensorflow.keras.metrics import MeanAbsoluteError
+from tensorflow.keras.metrics import MeanAbsoluteError, BinaryAccuracy
 from tensorflow.keras.optimizers import SGD, Adam
 from datetime import datetime
 
@@ -52,6 +52,28 @@ def read_scores(size):
         r = float(f.readline())
         a.append(r)
     return a
+
+
+# Read person, score, and shifts from data
+def read_personal_data(str):
+    data = pd.read_fwf(str)
+    a = []
+    for row in range(len(data)):
+        r = split_data(data.iloc[row].values)
+        a.append(r)
+
+    df_new = pd.DataFrame(a)
+    return df_new
+
+
+# Split personal data into values
+def split_data(row):
+    arr_row = str(row)
+    arr_row = arr_row.replace("[", "")
+    arr_row = arr_row.replace("]", "")
+    arr_row = arr_row.replace("'", "")
+    result = arr_row.split(",")
+    return result
 
 
 ##########################################
@@ -213,12 +235,12 @@ def weigh_scores(g_scores, p_scores, w=0.5):
     return np.array(f_scores)
 
 
-########################################
-#      Train and evaluate network      #
-########################################
+#########################################
+#      Train and evaluate networks      #
+#########################################
 
 # Compile and fit pp model
-def personal_preference_model(x_train, x_val, y_train, y_val):
+def personal_preference_model(x_train, y_train):
     loaded_model = tf.keras.models.load_model("g_scoring_model_new")
 
     # Freeze some layers
@@ -240,7 +262,7 @@ def personal_preference_model(x_train, x_val, y_train, y_val):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, validation_data=(x_val, y_val), verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, verbose=0)
 
     print(model.summary())
 
@@ -248,20 +270,66 @@ def personal_preference_model(x_train, x_val, y_train, y_val):
 
 
 # Compile and fit pp model that is trained from scratch
-def scratch_model(x_train, x_val, y_train, y_val):
-    model = Sequential(name="PersonalPreferenceModel")
+def scratch_model(x_train, y_train):
+    model = Sequential(name="PersonalPreferenceModel2")
 
     model.add(Dense(256, activation='relu'))
     model.add(Dense(128, activation='relu'))
     model.add(Dense(1, activation='sigmoid'))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, validation_data=(x_val, y_val), verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, verbose=0)
 
     print(model.summary())
 
     return model, history
 
+
+# Compile and fit auto encoder pp model
+def auto_encoder_pp(train, val, dims):
+    # n_neurons_d = np.arange(10, 63, 20)
+    # n_neurons_e = np.flip(n_neurons_d)
+
+    # Encoder
+    encoder = Sequential(name="Encoder")
+    encoder.add(Dense(64, input_shape=[64], activation='relu'))
+    encoder.add(Dense(30, activation='relu'))
+    encoder.add(Dense(dims, activation='relu'))
+    # for n in n_neurons_e:
+    # encoder.add(Dense(n, activation='relu'))
+    print(encoder.summary())
+
+    # Decoder
+    decoder = Sequential(name="Decoder")
+    # for n in n_neurons_d:
+    # decoder.add(Dense(n, activation='relu'))   # len(n_neurons_d)-1
+    decoder.add(Dense(30, input_shape=[dims], activation='relu'))
+    decoder.add(Dense(50, activation='relu'))
+    decoder.add(Dense(64, activation='sigmoid'))
+
+    # Auto-encoder
+    autoencoder = Sequential([encoder, decoder], name="Auto-encoder")
+    print(decoder.summary())
+    print(autoencoder.summary())
+    autoencoder.compile(loss="mse", optimizer=Adam(learning_rate=0.001),
+                        metrics=[BinaryAccuracy()])
+    history = autoencoder.fit(train, train, batch_size=64, epochs=500, validation_data=(val, val), verbose=1)
+    # SGD(learning_rate=0.001, momentum=0.9)
+
+    return autoencoder, encoder, decoder, history
+
+
+# Evaluate model using RMSE and R^2
+def model_eval(predicted, actual):
+    mse = mean_squared_error(predicted, actual)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(actual, predicted)
+    return rmse, r2
+
+
+################################
+#      Plots and graphics      #
+################################
 
 # Plot the training history over epochs
 def plot_training(hist1):
@@ -311,14 +379,6 @@ def plot_predictions(pred1, pred2, test1, test2):
     ax[1].legend()
 
     plt.show()
-
-
-# Evaluate model using RMSE and R^2
-def model_eval(predicted, actual):
-    mse = mean_squared_error(predicted, actual)
-    rmse = np.sqrt(mse)
-    r2 = r2_score(actual, predicted)
-    return rmse, r2
 
 
 # Get shifts in a format where weekday and week is visible
@@ -386,6 +446,44 @@ def plot_graphic_schedule(dfs, personal_score, loaded_preds, scratch_preds, pp_p
     plt.show()
 
 
+###############################
+#      General functions      #
+###############################
+
+# Set restored values to binary data (1 for shift 0 if not)
+def set_binary(val):
+    for i in range(len(val)):
+        for j in range(len(val[i])-1):
+            if val[i, j] < 0.5:
+                val[i, j] = 0
+            else:
+                val[i, j] = 1
+    return val
+
+
+# Get number of different people who have answered
+def get_num_people(data):
+    data.rename(columns={1: 'Person', 0: 'Score'}, inplace=True)
+    data['Person'] = data['Person'].astype('category')
+    data['Person'] = data['Person'].cat.codes
+
+    num_people, cols = data.groupby('Person').count().shape
+
+    return data, num_people
+
+
+# Get dataframes for each person scoring shifts
+def get_personal_data(data):
+    data, num_people = get_num_people(data)
+    dfs = []
+    for i in range(num_people):
+        df = data.loc[data['Person'] == i]
+        lst = df.index[df['Score'] == '-1'].tolist()
+        df = df.drop(lst)
+        dfs.append(df)
+    return dfs
+
+
 if __name__ == '__main__':
 
     startTime = datetime.now()  # For measuring execution time
@@ -394,10 +492,37 @@ if __name__ == '__main__':
     q_answers = 200000  # How many scored rosters there are
     test_d = 1000    # How many data points used for testing
     weight = 0.5
-    get_preferences = True
+    get_preferences = False
     PP_model = False    # If set to true, then get_preferences also needs to be true
     PP_model_iter = False    # If set to true, then get_preferences also needs to be true
     comp_model = True
+    auto_enc = False
+
+    ###############################
+    #      Read personal data     #
+    ###############################
+
+    # Read personal data
+    p_data = read_personal_data('answers_more.txt')
+    p_dfs = get_personal_data(p_data)
+    pers_data = p_dfs[1]    # Choose which personal data to use
+
+    # Get shifts and their score
+    p_shifts = pers_data.iloc[:, 2:].apply(pd.to_numeric)
+    p_score = np.array(pers_data['Score'].apply(pd.to_numeric))
+
+    # Scale score to a scale 0-1
+    p_scaler = MinMaxScaler()
+    p_scores = p_scaler.fit_transform(p_score.reshape(-1, 1))
+
+    # Split data into train and test
+    pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.3)
+
+    print(pX_train, py_train)
+
+    ###############################
+    #      Read general data      #
+    ###############################
 
     # Read data
     dataframe = read_data_df(d_size)
@@ -438,38 +563,55 @@ if __name__ == '__main__':
         weighted_sc = weigh_scores(n_scores, w_scores, w=weight)
         weighted_sc_test = weigh_scores(n_scores_test, w_scores_test, w=weight)
 
+    if auto_enc:
+        dim = 15
+        train_p = 100
+
+        train_df = pd.DataFrame(train_X)
+        train_df['score'] = train_y
+
+        test_df = pd.DataFrame(test_X)
+        test_df['score'] = test_y
+
+        train_d = train_df.values
+        test_d = test_df.values
+
+        auto_model, enc, dec, auto_hist = auto_encoder_pp(train_d[:train_p], train_d[train_p:train_p+30], dims = dim)
+        preds = auto_model.predict(test_d[:train_p])
+
+        set_binary(preds)
+        print(preds[:5], test_d[:5])
+
     if comp_model:
-        t_data = 50
+        # t_data = 50
         preds = 6
 
         # Weigh preferences with general score
-        weighted = weigh_scores(train_y[:len(weighted_sc)], weighted_sc, w=weight)
-        weighted_test = weigh_scores(test_y[:len(weighted_sc_test)], weighted_sc_test, w=weight)
+        # weighted = weigh_scores(train_y[:len(weighted_sc)], weighted_sc, w=weight)
+        # weighted_test = weigh_scores(test_y[:len(weighted_sc_test)], weighted_sc_test, w=weight)
 
         # Load the pre-trained model
         loaded_model2 = tf.keras.models.load_model("g_scoring_model_new")
-        l_pred = loaded_model2.predict(test_X[:test_d])
-        rmse_score_l, r2_score_l = model_eval(l_pred, weighted_test[:test_d])
+        l_pred = loaded_model2.predict(pX_test)
+        rmse_score_l, r2_score_l = model_eval(l_pred, py_test)
 
         # Train model from scratch
-        s_model, s_hist = scratch_model(train_X[:t_data], train_X[t_data:t_data + 30],
-                                        weighted[:t_data], weighted[t_data:t_data+30])
-        s_pred = s_model.predict(test_X[:test_d])
-        rmse_score_s, r2_score_s = model_eval(s_pred, weighted_test[:test_d])
+        s_model, s_hist = scratch_model(pX_train, py_train)
+        s_pred = s_model.predict(pX_test)
+        rmse_score_s, r2_score_s = model_eval(s_pred, py_test)
 
         # Train general model with personal preference
-        pp_model, pp_hist = personal_preference_model(train_X[:t_data], train_X[t_data:t_data + 30],
-                                                      weighted[:t_data], weighted[t_data:t_data+30])
-        pp_pred = pp_model.predict(test_X[:test_d])
-        rmse_score_pp, r2_score_pp = model_eval(pp_pred, weighted_test[:test_d])
+        pp_model, pp_hist = personal_preference_model(pX_train, py_train)
+        pp_pred = pp_model.predict(pX_test)
+        rmse_score_pp, r2_score_pp = model_eval(pp_pred, py_test)
 
         print(test_X[:preds])
         print("Loaded model: RMSE: ", rmse_score_l, "R2: ", r2_score_l)
         print("Trained from scratch model: RMSE: ", rmse_score_s, "R2 : ", r2_score_s)
         print("Re-trained model: RMSE: ", rmse_score_pp, "R2: ", r2_score_pp)
 
-        dataframes = get_graphic_schedule(test_X[:preds])
-        plot_graphic_schedule(dataframes, weighted_test[:preds], l_pred[:preds],
+        dataframes = get_graphic_schedule(pX_test)
+        plot_graphic_schedule(dataframes, py_test[:preds], l_pred[:preds],
                               s_pred[:preds], pp_pred[:preds])
 
     if PP_model:
