@@ -144,7 +144,7 @@ def personal_preference_model(x_train, y_train):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=150, verbose=0)
 
     print(model.summary())
 
@@ -153,7 +153,7 @@ def personal_preference_model(x_train, y_train):
 
 # Compile and fit CNN pp model (load pre-trained model and re-train it)
 def pp_cnn_model(x_train, y_train):
-    loaded_model = tf.keras.models.load_model("general_cnn_model_new")
+    loaded_model = tf.keras.models.load_model("general_cnn_model_new2")
 
     # Freeze some layers
     for layer in loaded_model.layers[:3]:
@@ -174,7 +174,7 @@ def pp_cnn_model(x_train, y_train):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, epochs=1000, verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=50, verbose=0)
 
     print(model.summary())
 
@@ -190,7 +190,7 @@ def scratch_model(x_train, y_train):
     model.add(Dense(1, activation='sigmoid'))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=20, verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=400, verbose=0)
 
     print(model.summary())
 
@@ -453,17 +453,16 @@ def get_shift_image(data):
 def plot_training_batch(hists):
     figure, ax = plt.subplots(1, 1, figsize=(7, 6))
 
-    for i in range(len(hists)-1):
+    for i in range(len(hists)):
         ax.plot(hists[i].history['loss'], color="blue")
         ax.plot(hists[i].history['val_loss'], color="orange")
-        ax.set_xlabel("batch")
+        ax.set_xlabel("epoch")
         ax.set_ylabel("loss")
-        ax.grid()
-        ax.legend()
 
-    ax.plot(hists[len(hists)].history['loss'], color="blue", label="training")
-    ax.plot(hists[len(hists)].history['val_loss'], color="orange", label="validation")
-
+    ax.plot(hists[0].history['loss'], color="blue", label="training")
+    ax.plot(hists[0].history['val_loss'], color="orange", label="validation")
+    ax.grid()
+    ax.legend()
     plt.show()
 
     '''
@@ -479,6 +478,27 @@ def plot_training_batch(hists):
     '''
 
 
+# Display shifts as an image (size=(9,7))
+def get_shift_image2(data):
+    m_shifts, e_shifts, n_shifts = get_time_shifts(data)
+    shift = []
+    for m, e, n in zip(m_shifts, e_shifts, n_shifts):
+        w1 = np.array([m, e, n])
+        shift.append(w1)
+
+    '''
+    figure, ax = plt.subplots(2, 2, figsize=(8, 5))
+
+    ax[0, 0].imshow(shift[0], cmap="binary", interpolation='nearest')
+    ax[1, 0].imshow(shift[1], cmap="binary", interpolation='nearest')
+    ax[0, 1].imshow(shift[2], cmap="binary", interpolation='nearest')
+    ax[1, 1].imshow(shift[3], cmap="binary", interpolation='nearest')
+    plt.show()
+    '''
+
+    return shift
+
+
 if __name__ == '__main__':
 
     d_size = 200000  # How many shifts are used
@@ -489,7 +509,8 @@ if __name__ == '__main__':
 
     comp_model = False  # Run comparisons between models
     general_cnn = False     # Train CNN on general scores
-    cnn_personal = True    # Train CNN from scratch on only personal preference
+    cnn_personal = False    # Train CNN from scratch on only personal preference
+    iter_model = True
 
     ###############################
     #      Read general data      #
@@ -518,7 +539,7 @@ if __name__ == '__main__':
     p_dfs = get_personal_data(p_data)
     pers_data = p_dfs[0]    # Choose which personal data to use
 
-    pers_data = pers_data
+    # pers_data = pers_data.iloc[4:74, :]
     print(pers_data)
 
     # Get shifts and their score
@@ -530,7 +551,7 @@ if __name__ == '__main__':
     p_scores = p_scaler.fit_transform(p_score.reshape(-1, 1))
 
     # Split data into train and test
-    # pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.2)
+    pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.1, shuffle=False)
 
     # Train CNN model on pp from scratch
     if cnn_personal:
@@ -593,6 +614,47 @@ if __name__ == '__main__':
 
         plot_training_batch(cnn_hist)
         plot_predictions(cnn_pred, test_y[:test_d])
+
+    if iter_model:
+        h_list = []
+        # preds = []
+        for _ in range(50):
+            # split data
+            pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.2)
+
+            # Train MLP general model with personal preference
+            pp_model, pp_hist = personal_preference_model(pX_train, py_train)
+            pp_pred = pp_model.predict(pX_test)
+            rmse_score_pp, r2_score_pp = model_eval(pp_pred, py_test)
+
+            '''
+            cnn_pers_pred_train = pp_model_cnn.predict(gptrain_X)
+            pred_train = []
+            for i in range(len(gptrain_X)):
+                mse = mean_squared_error(cnn_pers_pred_train[i], py_train[i])
+                rmse = np.sqrt(mse)
+                pred_train.append(rmse)
+
+            # preds.append(pred_train)
+            '''
+            h_list.append(pp_hist)
+
+        plot_training_batch(h_list)
+        '''
+        print(pred_train)
+        print("MAX: ", max(pred_train))
+        # pred_train.sort()
+        # print(pred_train, type(pred_train), len(pred_train))
+        # print("Multiple MAX values: ", pred_train[-10:])
+
+        pred_train = np.array(pred_train)
+        N = 10
+        indices = (-pred_train).argsort()[:N]
+        # inds = pred_train.index(tmp[-N:])
+        chosen_X = pX_train[indices]
+
+        print(indices, chosen_X)
+        '''
 
     # Run tests for comparing different types of models
     if comp_model:
