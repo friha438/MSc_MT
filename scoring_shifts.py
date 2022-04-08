@@ -8,11 +8,11 @@ import matplotlib.pyplot as plt
 #############################
 
 # Create dataframe from given data
-def read_data_df(size):
-    data = pd.read_fwf('shift-masks.txt')
+def read_data_df():
+    data = pd.read_fwf('shifts_new.txt')
     d_f = data.iloc[1:, :]
     a = []
-    for row in range(size):
+    for row in range(len(d_f)-1):
         r = split_to_values(d_f.iloc[row])
         a.append(r)
 
@@ -34,7 +34,6 @@ def split_to_values(row):
 ####################################
 #       General functions          #
 ####################################
-# TODO: create an outer for loop to make the rest of the functions smaller
 
 # Get a list that only displays night shifts
 def get_night_shifts(data):
@@ -334,7 +333,6 @@ def count_weekends(data):
 
 
 # Score a roster for one person based on how much recovery there is after night shifts
-# Should scores be between 0-2 or 1-3?
 def score_weekends(weekends):
     score = []
     for w in weekends:
@@ -351,7 +349,7 @@ def score_weekends(weekends):
 #        Final score          #
 ###############################
 
-# Score summary of all scores
+# Score sum of all scores
 def score_shifts(cd_sc, ns_sc, cn_sc, ch_sc, r_sc, w_sc):
     score = []
     for i in range(len(cd_sc)):
@@ -360,23 +358,23 @@ def score_shifts(cd_sc, ns_sc, cn_sc, ch_sc, r_sc, w_sc):
     return score
 
 
-# Save scores to textfile
+# Save scores to text file
 def save_scores(scores):
     scores = scores.reshape((len(scores), 1))
-    textfile = open("scores.txt", "w")
+    textfile = open("scores_new.txt", "w")
     for sc in scores:
         np.savetxt(textfile, sc)
     textfile.close()
 
 
 if __name__ == '__main__':
-    d_size = 3307321
+    # d_size = 3307321
     plot_dist1 = False   # Plots the distribution of scores 1
     plot_dist2 = False   # Plots the distribution of scores 2
     final_dist = False   # Plots distribution of final score
 
     # Read data
-    shift_data = read_data_df(d_size).values
+    shift_data = read_data_df().values
 
     # Score number of consecutive days
     max_cons_days, min_cons_days = count_consecutive_working_days(shift_data)
@@ -406,43 +404,43 @@ if __name__ == '__main__':
     final_score = score_shifts(cons_days_scores, night_shift_scores, cons_nights_scores,
                                cons_hours_scores, recovery_scores, weekend_scores)
 
-    # save_scores(np.array(final_score))
+    save_scores(np.array(final_score))
 
     if plot_dist1:
-        fig1, ax = plt.subplots(1, 3, figsize=(14, 5))
-        ax[0].grid(axis='y')
-        ax[0].hist(cons_days_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[0].set_xlabel("Scores for consecutive days")
-        ax[0].set_ylabel("Distribution of scores")
+        fig1, ax1 = plt.subplots(1, 3, figsize=(14, 5))
+        ax1[0].grid(axis='y')
+        ax1[0].hist(cons_days_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax1[0].set_xlabel("Scores for consecutive days")
+        ax1[0].set_ylabel("Distribution of scores")
 
-        ax[1].grid(axis='y')
-        ax[1].hist(cons_hours_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[1].set_xlabel("Scores for consecutive shifts (in hours)")
+        ax1[1].grid(axis='y')
+        ax1[1].hist(cons_hours_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax1[1].set_xlabel("Scores for consecutive shifts (in hours)")
 
-        ax[2].grid(axis='y')
-        ax[2].hist(weekend_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[2].set_xlabel("Scores for free weekends")
+        ax1[2].grid(axis='y')
+        ax1[2].hist(weekend_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax1[2].set_xlabel("Scores for free weekends")
         plt.show()
 
     if plot_dist2:
-        fig2, ax = plt.subplots(1, 3, figsize=(14, 5))
-        ax[0].grid(axis='y')
-        ax[0].hist(night_shift_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[0].set_xlabel("Scores for night shifts")
-        ax[0].set_ylabel("Distribution of scores")
+        fig2, ax2 = plt.subplots(1, 3, figsize=(14, 5))
+        ax2[0].grid(axis='y')
+        ax2[0].hist(night_shift_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax2[0].set_xlabel("Scores for night shifts")
+        ax2[0].set_ylabel("Distribution of scores")
 
-        ax[1].grid(axis='y')
-        ax[1].hist(cons_nights_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[1].set_xlabel("Scores for consecutive night shifts")
+        ax2[1].grid(axis='y')
+        ax2[1].hist(cons_nights_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax2[1].set_xlabel("Scores for consecutive night shifts")
 
-        ax[2].grid(axis='y')
-        ax[2].hist(recovery_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
-        ax[2].set_xlabel("Scores for recovery hours")
+        ax2[2].grid(axis='y')
+        ax2[2].hist(recovery_scores, bins=np.arange(5) - 0.5, rwidth=0.8)
+        ax2[2].set_xlabel("Scores for recovery hours")
         plt.show()
 
     if final_dist:
-        fig, ax = plt.subplots()
-        ax.grid(axis='y')
+        fig, axis = plt.subplots()
+        axis.grid(axis='y')
         plt.hist(final_score, bins=np.arange(0, 4, 1 / 6) - 1 / (2 * 6), rwidth=0.8)
         plt.xticks(np.arange(0, 4, 0.5))
         plt.xlabel("Score of the roster")

@@ -6,7 +6,7 @@ from sklearn.preprocessing import MinMaxScaler
 # Create dataframe from given data
 # Complexity O(N)
 def read_data_df(size):
-    data = pd.read_fwf('shift-masks.txt')
+    data = pd.read_fwf('shifts_new.txt')
     d_f = data.iloc[1:, :]
     a = []
     for row in range(size):
@@ -60,7 +60,7 @@ def remove_few_shifts(data, scores, n):
 
 # Check for rows that are exactly the same, remove one of those
 # Complexity O(N^2)
-# TODO: improve complexity by introducing hash table
+# TODO: improve complexity by introducing hash table?
 def check_same(dataf):
     counter = 0
     same_shifts = []
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # Complexity: N = num of rows being read
     # Complexity: M = num of elements in a row
 
-    d_size = 3307321  # Data used for testing this script
+    d_size = 300  # Data used for testing this script
     d_s = 3307321   # All data used for scoring
     num_shifts = 7  # A roster with fewer shifts than this will be removed
 
@@ -91,7 +91,7 @@ if __name__ == '__main__':
     #      Read general data      #
     ###############################
 
-    # TODO: change data size to all data and check how many shifts are min shifts
+    # TODO: create method to read new data. Remove old methods elsewhere
     # Read data
     dataframe = read_data_df(d_size)
     gen_scores = np.array(read_scores(d_s))
@@ -102,7 +102,7 @@ if __name__ == '__main__':
     scores_f = sc_scores[:d_size]
 
     # Remove all rosters with fewer than 7 shifts
-    dataframe, scores_f = remove_few_shifts(dataframe, scores_f, num_shifts)
+    # dataframe, scores_f = remove_few_shifts(dataframe, scores_f, num_shifts)
     dataframe['score'] = scores_f
 
     '''
@@ -130,8 +130,8 @@ if __name__ == '__main__':
     dataframe.to_csv('new_df', index=False)
     print(dataframe.head(), len(dataframe), len(dataframe)/d_size)
     '''
-    # dataframe.to_csv('cleaned_df', index=False)
+    dataframe.to_csv('cleaned_df_new', index=False)
 
     # Check that the CSV loads
-    new_df = pd.read_csv('cleaned_df')
+    new_df = pd.read_csv('cleaned_df_new')
     print(new_df.head(), len(new_df))
