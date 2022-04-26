@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import math
+import scipy.stats as stats
+from scipy.stats import uniform
 import matplotlib.pyplot as plt
 
 
@@ -372,6 +375,7 @@ if __name__ == '__main__':
     plot_dist1 = False   # Plots the distribution of scores 1
     plot_dist2 = False   # Plots the distribution of scores 2
     final_dist = False   # Plots distribution of final score
+    kl_div_example = False
 
     # Read data
     shift_data = read_data_df().values
@@ -404,7 +408,7 @@ if __name__ == '__main__':
     final_score = score_shifts(cons_days_scores, night_shift_scores, cons_nights_scores,
                                cons_hours_scores, recovery_scores, weekend_scores)
 
-    save_scores(np.array(final_score))
+    # save_scores(np.array(final_score))
 
     if plot_dist1:
         fig1, ax1 = plt.subplots(1, 3, figsize=(14, 5))
@@ -449,3 +453,32 @@ if __name__ == '__main__':
 
     # Check if methods work correctly
     # plot_2methods(max_cons_days, min_cons_days, cons_days_scores, night_shifts, night_shift_scores)
+
+    if kl_div_example:
+        # Normal distribution N(0, 1)
+        mu = 0
+        variance = 1
+        sigma = math.sqrt(variance)
+        x = np.linspace(mu - 5 * sigma, mu + 5 * sigma, 100)
+        plt.plot(x, stats.norm.pdf(x, mu, sigma), color='orange', label='Normal distribution')
+
+        # Uniform distribution
+        x = np.linspace(-5.2, 5.2, 1000)
+        W = 4.0
+        mu = 0
+
+        left = mu - 0.5 * W
+        dist = uniform(left, W)
+        plt.plot(x, dist.pdf(x), ls='--', c='black', label='Uniform distribution')
+        plt.plot(-4.0, 0.0, 'o', color='magenta', label='point 1')
+        plt.plot(0.0, 0.25, 'o', color='dodgerblue', label='point 2')
+        plt.plot(0.0, 0.4, 'o', color='dodgerblue')
+        plt.vlines(x=0, ymin=0.25, ymax=0.4, colors='dodgerblue')
+
+        plt.xlim(-5.2, 5.2)
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.title('KL divergence example')
+        plt.legend()
+        plt.grid()
+        plt.show()

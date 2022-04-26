@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
+import seaborn as sns
 from tensorflow import keras
+from statistics import mean
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
@@ -123,7 +125,7 @@ def get_time_shifts(data):
 
 # Compile and fit pp model (using pre-trained model and re-training it)
 def personal_preference_model(x_train, y_train):
-    loaded_model = tf.keras.models.load_model("g_scoring_model_new")
+    loaded_model = tf.keras.models.load_model("mlp_model")
 
     # Freeze some layers
     for layer in loaded_model.layers[:3]:
@@ -144,7 +146,7 @@ def personal_preference_model(x_train, y_train):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=150, verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=200, verbose=0)
 
     print(model.summary())
 
@@ -153,10 +155,10 @@ def personal_preference_model(x_train, y_train):
 
 # Compile and fit CNN pp model (load pre-trained model and re-train it)
 def pp_cnn_model(x_train, y_train):
-    loaded_model = tf.keras.models.load_model("general_cnn_model_new2")
+    loaded_model = tf.keras.models.load_model("cnn_model97")
 
     # Freeze some layers
-    for layer in loaded_model.layers[:3]:
+    for layer in loaded_model.layers[:2]:
         layer.trainable = False
 
     # Check the trainable status of layers
@@ -174,7 +176,33 @@ def pp_cnn_model(x_train, y_train):
     # model.add(Dense(1, activation='sigmoid', name="fine_tune"))
 
     model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
-    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=50, verbose=0)
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=200, verbose=0)
+
+    print(model.summary())
+
+    return model, history
+
+
+# Compile and fit CNN pp model (load pre-trained model and re-train it)
+def pp_cnn_model2(x_train, y_train):
+    loaded_model = tf.keras.models.load_model("cnn_model321_ver2")
+
+    # Freeze some layers
+    for layer in loaded_model.layers[:2]:
+        layer.trainable = False
+
+    # Check the trainable status of layers
+    for layer in loaded_model.layers:
+        print(layer, layer.trainable)
+
+    model = Sequential(name="PPModelCNN2")
+    # for layer in loaded_model.layers[0:3]:
+    # model.add(layer)
+
+    model.add(loaded_model)
+
+    model.compile(loss='mse', optimizer=SGD(learning_rate=0.2, momentum=0.9), metrics=MeanAbsoluteError())
+    history = model.fit(x_train, y_train, batch_size=64, validation_split=0.1, epochs=200, verbose=0)
 
     print(model.summary())
 
@@ -290,8 +318,8 @@ def plot_training(hist1):
 
 
 # Plot the predictions against real values
-def plot_predictions(pred1, test1):
-    vals = 16
+def plot_predictions(pred1, test1, vals):
+    # vals = 16
     figure, ax = plt.subplots(1, 1, figsize=(5, 5))
     major_ticks = np.arange(0, 16, 1)
 
@@ -510,7 +538,8 @@ if __name__ == '__main__':
     comp_model = False  # Run comparisons between models
     general_cnn = False     # Train CNN on general scores
     cnn_personal = False    # Train CNN from scratch on only personal preference
-    iter_model = True
+    iter_model = False
+    comp_model_iter = True
 
     ###############################
     #      Read general data      #
@@ -535,12 +564,13 @@ if __name__ == '__main__':
     ###############################
 
     # Read personal data
-    p_data = read_personal_data('answers.txt')
+    p_data = read_personal_data('answers_frida.txt')
     p_dfs = get_personal_data(p_data)
     pers_data = p_dfs[0]    # Choose which personal data to use
 
     # pers_data = pers_data.iloc[4:74, :]
     print(pers_data)
+    print(len(pers_data))
 
     # Get shifts and their score
     p_shifts = pers_data.iloc[:, 2:65].apply(pd.to_numeric)
@@ -551,8 +581,16 @@ if __name__ == '__main__':
     p_scores = p_scaler.fit_transform(p_score.reshape(-1, 1))
 
     # Split data into train and test
-    pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.1, shuffle=False)
+    pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.1, shuffle=True)
+    '''
+    mlp_mod, mlp_hist = personal_preference_model(pX_train, py_train)
+    py_pred = mlp_mod.predict(pX_test)
+    rmse_mlp, r2_mlp = model_eval(py_pred, py_test)
 
+    print('RMSE: ', rmse_mlp, 'R2: ', r2_mlp)
+    plot_training(mlp_hist)
+    plot_predictions(py_pred, py_test, len(py_pred))
+    '''
     # Train CNN model on pp from scratch
     if cnn_personal:
         ###############################
@@ -661,7 +699,7 @@ if __name__ == '__main__':
         preds = 6
 
         # Load the pre-trained model
-        loaded_model2 = tf.keras.models.load_model("g_scoring_model_new")
+        loaded_model2 = tf.keras.models.load_model("mlp_model")
         l_pred = loaded_model2.predict(pX_test)
         rmse_score_l, r2_score_l = model_eval(l_pred, py_test)
 
@@ -698,3 +736,125 @@ if __name__ == '__main__':
         dataframes = get_graphic_schedule(pX_test)
         plot_graphic_schedule(dataframes, py_test[:preds], l_pred[:preds],
                               s_pred[:preds], pp_pred[:preds], pp_pred_cnn[:preds])
+
+        # Run tests for comparing different types of models
+
+    if comp_model_iter:
+        loaded_rmse = []
+        loaded_r2 = []
+        scratch_rmse = []
+        scratch_r2 = []
+        mlp_rmse = []
+        mlp_r2 = []
+        cnn_rmse = []
+        cnn_r2 = []
+        cnn2_rmse = []
+        cnn2_r2 = []
+        n = 30
+        for _ in range(n):
+            pX_train, pX_test, py_train, py_test = train_test_split(p_shifts.values, p_scores, test_size=0.1,
+                                                                    shuffle=True)
+            # Load the pre-trained model
+            loaded_model2 = tf.keras.models.load_model("mlp_model")
+            l_pred = loaded_model2.predict(pX_test)
+            rmse_score_l, r2_score_l = model_eval(l_pred, py_test)
+            loaded_rmse.append(rmse_score_l)
+            loaded_r2.append(r2_score_l)
+
+            # Train model from scratch
+            s_model, s_hist = scratch_model(pX_train, py_train)
+            s_pred = s_model.predict(pX_test)
+            rmse_score_s, r2_score_s = model_eval(s_pred, py_test)
+            scratch_rmse.append(rmse_score_s)
+            scratch_r2.append(r2_score_s)
+
+            # Train MLP general model with personal preference
+            pp_model, pp_hist = personal_preference_model(pX_train, py_train)
+            pp_pred = pp_model.predict(pX_test)
+            rmse_score_pp, r2_score_pp = model_eval(pp_pred, py_test)
+            mlp_rmse.append(rmse_score_pp)
+            mlp_r2.append(r2_score_pp)
+
+            # Train CNN general model with personal preference
+            gptrain_X = get_shift_image(pX_train)
+            gptest_X = get_shift_image(pX_test)
+
+            gptrain_X = np.array(gptrain_X)
+            gptest_X = np.array(gptest_X)
+            gptrain_X = gptrain_X.reshape(-1, 9, 7, 1)
+            gptest_X = gptest_X.reshape(-1, 9, 7, 1)
+
+            pp_model_cnn, pp_hist_cnn = pp_cnn_model(gptrain_X, py_train)
+            pp_pred_cnn = pp_model_cnn.predict(gptest_X)
+            rmse_score_cnn, r2_score_cnn = model_eval(pp_pred_cnn, py_test)
+            cnn_rmse.append(rmse_score_cnn)
+            cnn_r2.append(r2_score_cnn)
+
+            # Train CNN2 general model with personal preference
+            gp2train_X = get_shift_image2(pX_train)
+            gp2test_X = get_shift_image2(pX_test)
+
+            gp2train_X = np.array(gp2train_X)
+            gp2test_X = np.array(gp2test_X)
+            gp2train_X = gp2train_X.reshape(-1, 3, 21, 1)
+            gp2test_X = gp2test_X.reshape(-1, 3, 21, 1)
+
+            pp_model_cnn2, pp_hist_cnn2 = pp_cnn_model2(gp2train_X, py_train)
+            pp_pred_cnn2 = pp_model_cnn2.predict(gp2test_X)
+            rmse_score_cnn2, r2_score_cnn2 = model_eval(pp_pred_cnn2, py_test)
+            cnn2_rmse.append(rmse_score_cnn2)
+            cnn2_r2.append(r2_score_cnn2)
+
+        print(loaded_rmse)
+        print(scratch_rmse)
+        print(mlp_rmse)
+        print(cnn_rmse)
+        print(cnn2_rmse)
+        # Print results
+        print("Loaded model: RMSE: ", sum(loaded_rmse)/n, "R2: ", sum(loaded_r2)/n)
+        print("Trained from scratch model: RMSE: ", sum(scratch_rmse)/n, "R2 : ", sum(scratch_r2)/n)
+        print("Re-trained model: RMSE: ", sum(mlp_rmse)/n, "R2: ", sum(mlp_r2)/n)
+        print("Re-trained model (CNN): RMSE: ", sum(cnn_rmse)/n, "R2: ", sum(cnn_r2)/n)
+        print("Re-trained model (CNN2): RMSE: ", sum(cnn2_rmse) / n, "R2: ", sum(cnn2_r2) / n)
+
+        rmse_lists = [loaded_rmse, scratch_rmse, mlp_rmse, cnn_rmse, cnn2_rmse]
+        r2_lists = [loaded_r2, scratch_r2, mlp_r2, cnn_r2, cnn2_r2]
+        col_names = ['Loaded', 'Scratch', 'MLP', 'CNN1', 'CNN2']
+
+        df_rmse = pd.DataFrame(np.array(rmse_lists).T, columns=col_names)
+        df_rmse = df_rmse.melt(var_name='Model', value_name='RMSE score')
+
+        df_r2 = pd.DataFrame(np.array(r2_lists).T, columns=col_names)
+        df_r2 = df_r2.melt(var_name='Model', value_name='R2 score')
+
+        sns.boxplot(x='Model', y='RMSE score', data=df_rmse, width=0.5)
+        sns.stripplot(x='Model', y='RMSE score', color='black', data=df_rmse)
+        plt.grid(axis='both')
+        plt.show()
+
+        sns.boxplot(x='Model', y='R2 score', data=df_r2, width=0.5)
+        sns.stripplot(x='Model', y='R2 score', color='black', data=df_r2)
+        plt.grid(axis='both')
+        plt.show()
+
+        '''
+        print("Loaded model: RMSE: ", mean(loaded_rmse), "R2: ", mean(loaded_r2))
+        print("Trained from scratch model: RMSE: ", mean(scratch_rmse), "R2 : ", mean(scratch_r2))
+        print("Re-trained model: RMSE: ", mean(mlp_rmse), "R2: ", mean(mlp_r2))
+        print("Re-trained model (CNN): RMSE: ", mean(cnn_rmse), "R2: ", mean(cnn_r2))
+        print("Re-trained model (CNN2): RMSE: ", mean(cnn2_rmse), "R2: ", mean(cnn2_r2))
+        '''
+
+        '''
+        for rmse_array, r2_array in zip(rmse_lists, r2_lists):
+            df_rmse = pd.DataFrame(rmse_array, columns=['RMSE score'])
+            df_r2 = pd.DataFrame(r2_array, columns=['R2 score'])
+
+            sns.boxplot(y='RMSE score', data=df_rmse, width=0.4)
+            sns.stripplot(y='RMSE score', color='black', data=df_rmse)
+            plt.show()
+
+            sns.boxplot(y='R2 score', data=df_r2, width=0.4)
+            sns.stripplot(y='R2 score', color='black', data=df_r2)
+            plt.show()
+        '''

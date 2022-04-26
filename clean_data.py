@@ -1,15 +1,16 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 
 
 # Create dataframe from given data
 # Complexity O(N)
-def read_data_df(size):
-    data = pd.read_fwf('shifts_new.txt')
+def read_data_df(file):
+    data = pd.read_fwf(file)
     d_f = data.iloc[1:, :]
     a = []
-    for row in range(size):
+    for row in range(len(d_f)-1):
         r = split_to_values(d_f.iloc[row])
         a.append(r)
 
@@ -31,10 +32,10 @@ def split_to_values(row):
 
 # Read scores given for each shift
 # Complexity O(N)
-def read_scores(size):
+def read_scores(length, file):
     a = []
-    f = open("scores.txt", "r")
-    for i in range(size):
+    f = open(file, "r")
+    for i in range(length):
         r = float(f.readline())
         a.append(r)
     return a
@@ -79,33 +80,57 @@ def check_same(dataf):
     return counter, same_shifts
 
 
+# Get distribution of all data
+def get_data_distr(data):
+    shifts_lst = []
+    shifts_prop = []
+    len_row = data.iloc[0, :]
+    len_data = len(data)
+    for i in range(len(len_row)-1):
+        n_shifts = sum(data.iloc[:len_data, i])
+        shifts_lst.append(n_shifts)
+        shifts_prop.append(n_shifts/len_data)
+
+    return shifts_lst, shifts_prop
+
+
 if __name__ == '__main__':
     # Complexity: N = num of rows being read
     # Complexity: M = num of elements in a row
-
-    d_size = 300  # Data used for testing this script
-    d_s = 3307321   # All data used for scoring
-    num_shifts = 7  # A roster with fewer shifts than this will be removed
 
     ###############################
     #      Read general data      #
     ###############################
 
-    # TODO: create method to read new data. Remove old methods elsewhere
     # Read data
-    dataframe = read_data_df(d_size)
-    gen_scores = np.array(read_scores(d_s))
+    data_file = 'shifts_new.txt'
+    score_file = 'scores_new.txt'
+    dataframe = read_data_df(data_file)
+    gen_scores = np.array(read_scores(len(dataframe), score_file))
 
     # Scale the scores
     scaler = MinMaxScaler()
     sc_scores = scaler.fit_transform(gen_scores.reshape(-1, 1))
-    scores_f = sc_scores[:d_size]
 
-    # Remove all rosters with fewer than 7 shifts
-    # dataframe, scores_f = remove_few_shifts(dataframe, scores_f, num_shifts)
-    dataframe['score'] = scores_f
+    # Remove all rosters with fewer than n shifts (only for old data)
+    # num_shifts = 12  # A roster with fewer shifts than this will be removed
+    # dataframe, scores_f = remove_few_shifts(dataframe, sc_scores, num_shifts)
+
+    # Add scores and save data frame
+    dataframe['score'] = sc_scores
+    dataframe.to_csv('cleaned_df_new', index=False)
+
+    # Check that the CSV loads
+    new_df = pd.read_csv('cleaned_df_new')
+    print(new_df.head(), len(new_df))
+
+    # Plot distribution of data
+    shifts, prop = get_data_distr(new_df)
+    plt.plot(shifts)
+    plt.show()
 
     '''
+    # Computational complexity is too large to do this for the whole dataset, but can be done for <10000 data points
     # Check for rosters which are exactly the same and store index for those shifts
     c, s_shifts = check_same(dataframe)
 
@@ -130,8 +155,3 @@ if __name__ == '__main__':
     dataframe.to_csv('new_df', index=False)
     print(dataframe.head(), len(dataframe), len(dataframe)/d_size)
     '''
-    dataframe.to_csv('cleaned_df_new', index=False)
-
-    # Check that the CSV loads
-    new_df = pd.read_csv('cleaned_df_new')
-    print(new_df.head(), len(new_df))

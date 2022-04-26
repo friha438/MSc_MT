@@ -177,7 +177,7 @@ def weigh_scores(g_scores, p_scores, weight=0.5):
 
 # Compile and fit pp model
 def personal_preference_model(x_train, y_train):
-    loaded_model = tf.keras.models.load_model("g_scoring_model_new")
+    loaded_model = tf.keras.models.load_model("mlp_model")
 
     # Freeze some layers
     for layer in loaded_model.layers[:3]:
@@ -301,15 +301,15 @@ if __name__ == '__main__':
     d_size = 200000  # How many shifts are used
     q_answers = 2000  # How many scored rosters there are
     weight_wishes = 0.5    # Weigh scores between two preferences
-    PP_model = True  # Train, predict and evaluate a pp model for a given amount of data and weight distribution
+    PP_model = False  # Train, predict and evaluate a pp model for a given amount of data and weight distribution
     PP_model_iter = False  # Same as PP_model, but for a set of weight distributions and different amount of data
-    plot_distributions = False  # Plots the scores and distribution of shifts
+    plot_distributions = True  # Plots the scores and distribution of shifts
 
     ###############################
     #      Read general data      #
     ###############################
 
-    df = pd.read_csv('cleaned_df')
+    df = pd.read_csv('cleaned_df_new')
     X = df.iloc[:d_size, :63].values
     y = df.iloc[:d_size, 63].values
     train_X, test_X, train_y, test_y = train_test_split(X, y, test_size=0.2, shuffle=True)
@@ -325,8 +325,8 @@ if __name__ == '__main__':
     # Score data based on liking/disliking nights
     n_distr, number_nights = night_distribution(night_shifts)
     n_distr_test, number_nights_test = night_distribution(night_shifts_test)
-    n_scores = negative_corr_person(n_distr, number_nights[:q_answers])
-    n_scores_test = negative_corr_person(n_distr, number_nights_test[:q_answers])
+    n_scores = positive_corr_person(n_distr, number_nights[:q_answers])
+    n_scores_test = positive_corr_person(n_distr, number_nights_test[:q_answers])
 
     # Score data based on liking/disliking weekends
     w_dist, w_shifts = weekend_distribution(train_X)
@@ -348,26 +348,26 @@ if __name__ == '__main__':
         d = 200  # Data points used for training
         w = 0.9  # Weight between general scores and preference scores
 
-        final_weighted = weigh_scores(train_y[:d], w_scores[:d], weight=w)
-        final_weighted_test = weigh_scores(test_y[:q_answers], w_scores_test[:q_answers], weight=w)
+        final_weighted = weigh_scores(train_y[:d], n_scores[:d], weight=w)
+        final_weighted_test = weigh_scores(test_y[:q_answers], n_scores_test[:q_answers], weight=w)
 
         # Create and train model
         pp_model, pp_hist = personal_preference_model(train_X[:d], final_weighted)
 
         # Predict and evaluate
         pred_val = pp_model.predict(test_X[:q_answers])
-        rmse_score, r2_score = model_eval(pred_val, final_weighted_test)
+        rmse_sc, r2_sc = model_eval(pred_val, final_weighted_test)
 
-        print("RMSE (weekend person): ", rmse_score)
-        print("R2 (weekend person): ", r2_score)
+        print("RMSE (weekend person): ", rmse_sc)
+        print("R2 (weekend person): ", r2_sc)
 
         plot_training(pp_hist)
 
     if PP_model_iter:
-        weight_step = 0.2
+        weight_step = 0.1
         data_step = 20
         weights = np.arange(0.0, 1.05, weight_step)
-        data_used = np.arange(10, 111, data_step)
+        data_used = np.arange(10, 211, data_step)
 
         rmse_lst = []
         r2_lst = []
@@ -388,19 +388,19 @@ if __name__ == '__main__':
 
                 # Predict and evaluate
                 pred_val = pp_model.predict(test_X[:q_answers])
-                rmse_score, r2_score = model_eval(pred_val, final_weighted_test[:q_answers])
+                rmse_sc, r2_sc = model_eval(pred_val, final_weighted_test[:q_answers])
 
                 x_weights.append(w)
                 y_data.append(d)
-                rmse_lst.append(rmse_score)
-                r2_lst.append(r2_score)
+                rmse_lst.append(rmse_sc)
+                r2_lst.append(r2_sc)
 
         ############################################
         #       Plot 3D graph of evaluations       #
         ############################################
 
-        eval_res = np.array(r2_lst)     # evaluation being plotted
-        # eval_res = np.array(rmse)     # evaluation being plotted
+        # eval_res = np.array(r2_lst)     # evaluation being plotted
+        eval_res = np.array(rmse_lst)     # evaluation being plotted
 
         style.use('ggplot')
         fig1 = plt.figure()
@@ -418,7 +418,7 @@ if __name__ == '__main__':
 
         ax1.set_xlabel('Weights')
         ax1.set_ylabel('Data used')
-        ax1.set_zlabel('R2')            # Change according to evaluation method
+        ax1.set_zlabel('RMSE')            # Change according to evaluation method
 
         plt.show()
 
@@ -433,6 +433,27 @@ if __name__ == '__main__':
         ax2.grid(axis='y')
         plt.hist(number_nights, bins=np.arange(12)-0.5, rwidth=0.8)
         plt.xticks(range(12))
-        plt.xlabel("Number of night shifts in a roster per person")
-        plt.ylabel("Distribution of night shifts in rosters")
+        plt.title('Distribution of night shifts for 200 000 rosters')
+        plt.xlabel("Number of night shifts in a roster")
+        plt.ylabel("Number of rosters with x night shifts")
+        plt.show()
+
+        X = np.linspace(0.0, 11.0, 12)
+        plt.plot(X, n_distr.pdf(X), label='PDF')
+        plt.title('Probability density function of the distribution of night shifts')
+        plt.xlabel('Number of night shifts in a roster')
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+        X = np.linspace(0.0, 11.0, 12)
+        plt.plot(X, n_distr.cdf(X), color='dodgerblue', label='CDF for person who likes night shifts')
+        plt.plot(X, n_distr.cdf(X), 'o', color='dodgerblue')
+        plt.plot(X, np.absolute(n_distr.cdf(X) - 1), color='darkorange',
+                 label='CDF for person who dislikes night shifts')
+        plt.plot(X, np.absolute(n_distr.cdf(X) - 1), 'o', color='darkorange')
+        plt.title('Cumulative distribution function of the distribution of night shifts')
+        plt.xlabel('Number of night shifts in a roster')
+        plt.legend()
+        plt.grid()
         plt.show()

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import math
+from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA, FastICA, FactorAnalysis
 from sklearn.model_selection import train_test_split
@@ -70,34 +70,39 @@ def fit_ica(data, comp):
 # Create an auto_encoder for dimensionality reduction
 def auto_encoder(train, val, dims, save_model=False, load_model=False):
     if load_model:
-        loaded_model = tf.keras.models.load_model("auto_encoder")
-        loaded_encoder = tf.keras.models.load_model("encoder")
-        loaded_decoder = tf.keras.models.load_model("decoder")
+        loaded_model = tf.keras.models.load_model("auto_encoder", compile=False)
+        loaded_encoder = tf.keras.models.load_model("encoder", compile=False)
+        loaded_decoder = tf.keras.models.load_model("decoder", compile=False)
+
+        # loaded_model.compile(optimizer='adam', loss='mse')
+        # loaded_encoder.compile(optimizer='adam', loss='mse')
+        # loaded_decoder.compile(optimizer='adam', loss='mse')
+
         return loaded_model, loaded_encoder, loaded_decoder
 
-    # n_neurons_d = np.arange(10, 63, 5)
+    # n_neurons_d = np.arange(10, 63, 20)
     # n_neurons_e = np.flip(n_neurons_d)
 
     # Encoder
     encoder = Sequential(name="Encoder")
-    encoder.add(Dense(50, input_shape=[63], activation='relu'))
+    encoder.add(Dense(63, input_shape=[63], activation='relu'))  # 63 to 60
     encoder.add(Dense(30, activation='relu'))
     encoder.add(Dense(dims, activation='relu'))
-    # for n in range(len(n_neurons_e)):
-    # encoder.add(Dense(n_neurons_e[n], activation='relu'))
+    # for n in n_neurons_e:
+    # encoder.add(Dense(n, activation='relu'))  # 60 to 10
     print(encoder.summary())
 
     # Decoder
     decoder = Sequential(name="Decoder")
-    # for n in range(len(n_neurons_d)):
-    # decoder.add(Dense(n_neurons_d[n], activation='relu'))   # len(n_neurons_d)-1
+    # for n in n_neurons_d:   # 10 to 60
+    # decoder.add(Dense(n, activation='relu'))   # len(n_neurons_d)-1
     decoder.add(Dense(30, input_shape=[dims], activation='relu'))
     decoder.add(Dense(50, activation='relu'))
     decoder.add(Dense(63, activation='sigmoid'))
-    # print(decoder.summary())
 
     # Auto-encoder
     autoencoder = Sequential([encoder, decoder], name="Auto-encoder")
+    print(decoder.summary())
     print(autoencoder.summary())
     autoencoder.compile(loss="mse", optimizer=Adam(learning_rate=0.001),
                         metrics=[BinaryAccuracy()])
@@ -231,35 +236,88 @@ def count_distribution(data):
 
 if __name__ == '__main__':
     startTime = datetime.now()  # For measuring execution time
-    d_size = 1000000         # How many shifts are used
+    d_size = 100000         # How many shifts are used
     n_comp = 10             # How many features the feature-space is reduced to
     encoder_decoder = True  # True if auto-encoder is initialized and trained
     benchmarks = False      # True if benchmarking methods are initialized and trained
     pca = False            # True for only training and testing pca
 
+    df = pd.read_csv('cleaned_df_new')
+    data = df.iloc[:d_size, :63].values
+
     # Read data
-    dataframe = read_data_df(d_size)
+    # dataframe = read_data_df(d_size)
 
     # split data for training, validation, and testing
-    train_set, test_set = train_test_split(dataframe.values, test_size=0.2)
+    train_set, test_set = train_test_split(data, test_size=0.2)
     train_set, val_set = train_test_split(train_set, test_size=0.1)
 
-    # TODO: run on GPU --> make sure cuda installation works
+    # auto_en, enc, dec = auto_encoder(train_set, val_set, n_comp, load_model=True)
+    # enc_preds = enc.predict(test_set)
+
+    '''
+    wcss = []
+    for i in range(1, 10):
+        print("Running")
+        kmeans = KMeans(i)
+        kmeans.fit(enc_preds)
+        wcss_iter = kmeans.inertia_
+        wcss.append(wcss_iter)
+
+    number_clusters = range(1, 10)
+    plt.plot(number_clusters, wcss)
+    plt.title('Elbow test for clustering')
+    plt.xlabel('Number of clusters')
+    plt.ylabel('WCSS')
+    plt.show()
+    '''
+
     if encoder_decoder:
+        dim_red = np.arange(5, 60, 10)
+        kl_res = []
+        j_res = []
+        hamm_res = []
+        for d in dim_red:
 
-        # Define and fit auto_encoder
-        auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, n_comp)
-        restored_data = encoder_predictor(enc, dec, test_set)
-        res_bin = set_binary(restored_data)
+            # Define and fit auto_encoder
+            auto_en, enc, dec, auto_hist = auto_encoder(train_set, val_set, d)
+            restored_data = encoder_predictor(enc, dec, test_set)
+            res_bin = set_binary(restored_data)
 
-        # Old evaluation method
-        kl_old, jaccard_old = model_evaluation(test_set, restored_data)
+            # Old evaluation method
+            # kl_old, jaccard_old = model_evaluation(test_set, restored_data)
 
-        # New evaluation methods
-        kl_div = kl_divergence(test_set, set_binary(restored_data))
-        j_ind = model_eval_jaccard(test_set, restored_data)
-        hamm_val, hamm_shift = hamming_distance(test_set, set_binary(restored_data))
+            # New evaluation methods
+            kl_div = kl_divergence(test_set, set_binary(restored_data))
+            j_ind = model_eval_jaccard(test_set, restored_data)
+            hamm_val, hamm_shift = hamming_distance(test_set, set_binary(restored_data))
 
+            kl_res.append(kl_div)
+            j_res.append(j_ind)
+            hamm_res.append(hamm_shift)
+
+        plt.plot(dim_red, kl_res)
+        plt.xlabel("Dimensions")
+        plt.ylabel("KL divergence")
+        plt.grid()
+        plt.legend()
+        plt.show()
+
+        plt.plot(dim_red, j_res)
+        plt.xlabel("Dimensions")
+        plt.ylabel("Jaccard index")
+        plt.grid()
+        plt.legend()
+        plt.show()
+
+        plt.plot(dim_red, hamm_res)
+        plt.xlabel("Dimensions")
+        plt.ylabel("Hamming distance (part of total shifts)")
+        plt.grid()
+        plt.legend()
+        plt.show()
+
+        '''
         print("KL divergence (pre-implemented): ", kl_old)
         print("KL divergence (self-implemented): ", kl_div)
         print("Jaccard index (pre-implemented): ", jaccard_old)
@@ -276,6 +334,7 @@ if __name__ == '__main__':
         plt.show()
 
         plot_progress(auto_hist)
+        '''
 
     elif benchmarks:
         dim_red = np.arange(10, 61, 10)
